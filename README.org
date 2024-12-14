@@ -1,0 +1,1281 @@
+* Data preparation
+** Spatial Operations
+
+Make common QGIS map ops reproducible by directly calling gdal via interop
+#+begin_src lisp
+  (defun layers-from-paths ()
+    "finds tiffs in copied dir"
+
+    ;; go to disk region of copied data
+    (cd "/")
+                                          ; match the path
+                                          ; &&&test is 1 item before firsting
+                                          ; get car
+                                          ; make #P<> a string
+                                          ; go there and report
+    (cd (path (first (directory "bulk-1/**/*COPY"))))
+    (format t "Collecting layers from: ~A~%" (pwd))
+                                          ; return string representation of files
+    (set-difference
+     (mapcar #'path (finder (path~ "index") (path~ "indices") (extension= "tif")))
+     (mapcar #'path (finder (path~ "tiles")))
+     :test #'equal))
+
+  (defun layer-name-from-path (path)
+    "extracts the tiff color layer name from a pix4d path"
+                                          ; keep after /indices/
+                                          ; keep before first /
+    (first (split "/" (second (split "/indices/" path)))))
+
+  (defun layer-date-from-path (path)
+    "&&& extracts the tiff date from our pix4d paths"
+                                          ; keep after &&&
+                                          ; keep before first &&&
+    (first (split "&&&" (second (split "&&&" path)))))
+
+  (defun gather-for-gdal ()
+    "&&&"
+    (let* ((west-files (layers-from-paths))
+           (indices (mapcar #'layer-name-from-path west-files))
+           (indices-s (sort (copy-list indices) #'string<))
+           (expected-i '("red_edge" "red" "nir" "ndvi" "green" "blue" "Sentera_NDRE"))
+           (expected-is (sort (copy-list expected-i) #'string<))
+           (expected-n (length expected-i)))
+                                          ; test length
+      (assert (= expected-n
+                 (length west-files))
+              () "Unexpected n items, recieved: ~D" (length west-files))
+                                          ; test contents
+      (assert (equal expected-is
+                     indices-s)
+              () "Indices do not match expected values
+                Expected:~%~S
+                Recieved:~%~S" expected-is indices-s)
+      (dolist (f west-files)
+        (print f))
+      (dolist (i indices)
+        (print i))
+      (y-or-n-p "With these files; Continue?")
+      (values west-files indices)
+      ))
+
+  (defparameter west-files (gather-for-gdal))
+
+  (defun gdalinfo (datasetname)
+    "usage: gdalinfo [--help-general] [-json] [-mm] [-stats | -approx_stats] [-hist] [-nogcp] [-nomd]
+                  [-norat] [-noct] [-nofl] [-checksum] [-proj4]
+                  [-listmdd] [-mdd domain|`all`] [-wkt_format wkt1|wkt2|...]*
+                  [-sd subdataset] [-oo name=value]* [-if format]* datasetname"
+
+    ($cmd (format nil "gdalinfo ~a" datasetname )))
+  (gdalinfo (first west-files))
+
+  (defun gdal-edit (color datasetname)
+    "Usage: gdal_edit [--help-general] [-ro] [-a_srs srs_def]
+                   [-a_ullr ulx uly lrx lry] [-a_ulurll ulx uly urx ury llx lly]
+                   [-tr xres yres] [-unsetgt] [-unsetrpc] [-a_nodata value] [-unsetnodata]
+                   [-offset value] [-scale value] [-units value]
+                   [-colorinterp_X red|green|blue|alpha|grayundefined]*
+                   [-unsetstats] [-stats] [-approx_stats]
+                   [-setstats min max mean stddev]
+                   [-gcp pixel line easting northing [elevation]]*
+                   [-unsetmd] [-oo NAME=VALUE]* [-mo META-TAG=VALUE]*  datasetname"
+
+
+    ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" color datasetname)))
+
+  (call-gdal-edit (first west-files))
+
+  ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" "asdfasdfh" (first west-files)))
+  (call-gdalinfo (first west-files))
+
+  (defun gdalwarp-&&& (srcfile dstfile)
+    " Usage: gdalwarp [--help-general] [--formats]
+      [-s_srs srs_def] [-t_srs srs_def] [-to NAME=VALUE]* [-vshift  -novshift]
+      [[-s_coord_epoch epoch] | [-t_coord_epoch epoch]]
+      [-order n | -tps | -rpc | -geoloc] [-et err_threshold]
+      [-refine_gcps tolerance [minimum_gcps]]
+      [-te xmin ymin xmax ymax] [-tr xres yres] [-tap] [-ts width height]
+      [-ovr level|AUTO|AUTO-n|NONE] [-wo NAME=VALUE] [-ot Byte/Int16/...] [-wt Byte/Int16]
+      [-srcnodata value [value...]] [-dstnodata value [value...]] -dstalpha
+      [-r resampling_method] [-wm memory_in_mb] [-multi] [-q]
+      [-cutline datasource] [-cl layer] [-cwhere expression]
+      [-csql statement] [-cblend dist_in_pixels] [-crop_to_cutline]
+      [-if format]* [-of format] [-co NAME=VALUE]* [-overwrite]
+      [-nomd] [-cvmd meta_conflict_value] [-setci] [-oo NAME=VALUE]*
+      [-doo NAME=VALUE]*
+      srcfile* dstfile
+
+      Available resampling methods:
+          near (default), bilinear, cubic, cubicspline, lanczos, average, rms,
+          mode,  max, min, med, Q1, Q3, sum. "
+    ($cmd (format nil "gdalwarp  ~A ~A" srcfile dstfile)))
+  (gdalwarp-&&& (first west-files) "test.tif")
+
+  (defun gdal_merge (outfile raster1 raster2)
+  " Usage: gdal_merge.py [-o out_filename] [-of out_format] [-co NAME=VALUE]*
+                       [-ps pixelsize_x pixelsize_y] [-tap] [-separate] [-q] [-v] [-pct]
+                       [-ul_lr ulx uly lrx lry] [-init \"value [value...]\"]
+                       [-n nodata_value] [-a_nodata output_nodata_value]
+                       [-ot datatype] [-createonly] input_files
+                       [--help-general]
+  gdal_merge.py -o merged.tif -of GTiff input1.tif input2.tif")
+
+
+
+#+end_src
+
+gaussian blur not specific to spatial software ensuring spatial metadata preservation
+#+begin_src bash
+  #apply sequentially for gaussian pyramid
+  convert input.tif -gaussian-blur 0x2 output.tif #0 specifies auto radius for 2 sigma
+  ffmpeg -i input.tif -filter:v "gblur=sigma=2" output.tif
+
+  #Before and after metadata comparison must be zero diff
+  gdalinfo input.geotif
+  gdalinfo output.geotif
+
+  #else transfer metadata
+  gdal_edit [--help] [--help-general] [-ro] [-a_srs <srs_def>]
+        [-a_ullr <ulx> <uly> <lrx> <lry>] [-a_ulurll <ulx> <uly> <urx> <ury> <llx> <lly>]
+        [-tr <xres> <yres>] [-unsetgt] [-unsetrpc] [-a_nodata <value>] [-unsetnodata]
+        [-a_coord_epoch <epoch>] [-unsetepoch]
+        [-unsetstats] [-stats] [-approx_stats]
+        [-setstats <min> <max> <mean> <stddev>]
+        [-scale <value>] [-offset <value>] [-units <value>]
+        [-colorinterp_<X> {red|green|blue|alpha|gray|undefined|pan|coastal|rededge|nir|swir|mwir|lwir|...}]...
+        [-gcp <pixel> <line> <easting> <northing> [<elevation>]]...
+        [-unsetmd] [-oo <NAME>=<VALUE>]... [-mo <META-TAG>=<VALUE>]...
+        <datasetname>
+#+end_src
+** Export to geopackage database
+ogr2ogr to incrementally add geopackage layers
+https://gdal.org/en/stable/programs/ogr2ogr.html
+#+begin_src bash
+  # car init raster
+  ogr2ogr -f GPKG output.gpkg first_raster.tif -nln raster-1
+
+  # mapcar cadr append raster
+  ogr2ogr -f GPKG -update output.gpkg second_raster.tif -nln raster-2
+  ogr2ogr -f GPKG -update output.gpkg third_raster.tif -nln raster-3
+#+end_src
+
+targeting gpkg spatial database formatting with tabular data
+https://gdal.org/user/ogr_sql_dialect.html#joins
+#+begin_src bash
+  # Add polygon shapefile
+  # &&& to single shape gpkg ip
+  ogr2ogr -f GPKG -update output.gpkg input_polygons.shp -nln extents
+
+
+  # join csv to shapefile
+  ogr2ogr -sql "SELECT inshape.*, joincsv.* \
+      FROM inshape \
+      LEFT JOIN 'joincsv.csv'.joincsv \
+      ON inshape.GISJOIN = joincsv.GISJOIN" \
+          shape_join.shp inshape.shp
+#+end_src
+
+** Data Aggregator
+sql queries over gpkg
+map pixels into data unformatted dat at every location withing selected polygon
+
+requires spatialite extension
+mito syntax
+
+#+begin_src python
+  import sqlite3
+  import rasterio
+
+  def connect_spatialite(db_path):
+      """Connect to SpatiaLite database"""
+      conn = sqlite3.connect(db_path)
+      conn.enable_load_extension(True)
+      conn.load_extension('mod_spatialite')
+      return conn
+
+  def get_polygon_by_id(conn, table_name, polygon_id):
+      """Retrieve a specific polygon by its ID"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT id, ST_AsText(geometry) as geom
+          FROM {table_name}
+          WHERE id = ?
+      """, (polygon_id,))
+      return cursor.fetchone()
+
+  def get_pixels_in_polygon(conn, raster_grid_table, polygon_geom):
+      """Get pixel locations within a given polygon"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT
+              ST_X(ST_Centroid(geometry)) as x,
+              ST_Y(ST_Centroid(geometry)) as y
+          FROM {raster_grid_table}
+          WHERE ST_Intersects(geometry, ST_GeomFromText(?))
+      """, (polygon_geom,))
+      return cursor.fetchall()
+
+  def extract_raster_values_at_point(conn, rasters_table, x, y, srid=4326):
+      """Extract pixel values from all rasters at a specific point"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT
+              raster_name,
+              ST_Value(raster, ST_GeomFromText('POINT(? ?)', ?)) as pixel_value
+          FROM {rasters_table}
+      """, (x, y, srid))
+      return cursor.fetchall()
+
+  def main(db_path):
+      conn = connect_spatialite(db_path)
+
+      try:
+          # Get a specific polygon
+          polygon = get_polygon_by_id(conn, 'my_polygons', 1)
+          print("Polygon:", polygon)
+
+          # Get pixels within that polygon
+          pixels = get_pixels_in_polygon(conn, 'raster_grid', polygon[1])
+          print("Pixels in Polygon:", pixels)
+
+          # If we have a specific pixel location
+          if pixels:
+              x, y = pixels[0]
+              raster_values = extract_raster_values_at_point(conn, 'rasters', x, y)
+              print("Raster Values:", raster_values)
+
+      finally:
+          conn.close()
+
+  if __name__ == '__main__':
+      main('/path/to/spatialite.db') #compatible with gpkg
+#+end_src
+
+Alist data format using :keywords
+#+begin_src lisp
+;; Creating nested alists for sequence data points with results
+(let ((sequences
+      `((:sequence-1 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
+                                      (:x . 1.2)
+                                      (:y . 3.4)
+                                      (:z . 0.5)
+                                      (:results . ((:value1 . 42.3)
+                                                 (:value2 . 18.7)
+                                                 (:value3 . 33.1)))))
+                       (:datapoint . ((:time . "2024-01-01T10:00:01")
+                                      (:x . 1.3)
+                                      (:y . 3.5)
+                                      (:z . 0.6)
+                                      (:results . ((:value1 . 43.1)
+                                                 (:value2 . 19.2)
+                                                 (:value3 . 34.0)))))))
+        (:sequence-2 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
+                                      (:x . 2.1)
+                                      (:y . 4.2)
+                                      (:z . 1.1)
+                                      (:results . ((:value1 . 55.4)
+                                                 (:value2 . 22.3)
+                                                 (:value3 . 44.7)))))))))
+
+ ;; Access specific values
+ (let* ((seq1 (cdr (assoc :sequence-1 sequences)))
+        (first-point (cdr (assoc :datapoint seq1)))
+        (results (cdr (assoc :results first-point))))
+   (cdr (assoc :value1 results)))  ; => 42.3
+
+ ;; Function to extract all x values from a sequence
+ (defun get-x-values (sequence-data)
+   (mapcar #'(lambda (point)
+               (cdr (assoc :x (cdr point))))
+           (remove-if-not #'(lambda (pair)
+                             (eq (car pair) :datapoint))
+                         sequence-data)))
+
+ ;; Get x values from sequence-1
+ (get-x-values (cdr (assoc :sequence-1 sequences)))  ; => (1.2 1.3)
+
+ ;; Function to get all value1 results from a sequence
+ (defun get-value1-series (sequence-data)
+   (mapcar #'(lambda (point)
+               (let ((results (cdr (assoc :results (cdr point)))))
+                 (cdr (assoc :value1 results))))
+           (remove-if-not #'(lambda (pair)
+                             (eq (car pair) :datapoint))
+                         sequence-data)))
+
+ ;; Calculate average of value1 for sequence-1
+ (let ((values (get-value1-series (cdr (assoc :sequence-1 sequences)))))
+   (/ (reduce #'+ values) (length values)))  ; => 42.7
+
+ ;; Function to get all datapoints at a specific time
+ (defun get-points-at-time (sequences time)
+   (loop for (seq-name . seq-data) in sequences
+         collect (cons seq-name
+                      (find-if #'(lambda (point)
+                                  (string= (cdr (assoc :time (cdr point))) time))
+                              seq-data
+                              :key #'car)))))
+
+(get-points-at-time sequences "2024-01-01T10:00:00")
+
+#+end_src
+* Model ByT5 in pytorch
+** Data Loader
+
+parallel text format in train.txt
+#+begin_src
+source_sentence_1 ||| target_sentence_1
+source_sentence_2 ||| target_sentence_2
+source_sentence_3 ||| target_sentence_3
+#+end_src
+
+#+begin_src python
+import torch
+from torch.utils.data import Dataset
+import pandas as pd
+
+class Seq2SeqDataset(Dataset):
+    def __init__(self, file_path, source_tokenizer, target_tokenizer, max_length=128):
+        # Read the data
+        self.data = pd.read_csv(file_path, sep='|||', header=None, names=['source', 'target'])
+
+        # Tokenize and encode
+        self.source_tokens = [
+            source_tokenizer.encode(
+                text,
+                max_length=max_length,
+                truncation=True,
+                padding='max_length'
+            ) for text in self.data['source']
+        ]
+
+        self.target_tokens = [
+            target_tokenizer.encode(
+                text,
+                max_length=max_length,
+                truncation=True,
+                padding='max_length'
+            ) for text in self.data['target']
+        ]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return {
+            'source_ids': torch.tensor(self.source_tokens[idx], dtype=torch.long),
+            'target_ids': torch.tensor(self.target_tokens[idx], dtype=torch.long)
+        }
+#+end_src
+
+** Span corruption pretraining objective
+calculate spans method and apply to a pretraining text string
+#+begin_src python
+  def corrupt_spans(text: str, mean_span_length: int = 20, corruption_rate: float = 0.15):
+      # Convert text to bytes
+      byte_sequence = text.encode('utf-8')
+      sequence_length = len(byte_sequence)
+
+      # Calculate number of spans to corrupt
+      target_corrupt_bytes = int(sequence_length * corruption_rate)
+      spans = []
+      current_corrupt_bytes = 0
+
+      while current_corrupt_bytes < target_corrupt_bytes:
+          # Sample span length from geometric distribution
+          span_length = np.random.geometric(1/mean_span_length)
+
+          # Sample start position
+          valid_starts = sequence_length - span_length
+          if valid_starts <= 0:
+              break
+          start = np.random.randint(0, valid_starts)
+
+          spans.append((start, start + span_length))
+          current_corrupt_bytes += span_length
+
+      return spans
+
+  def create_training_example(text: str, spans: List[Tuple[int, int]]):
+      byte_sequence = text.encode('utf-8')
+      corrupted = bytearray(byte_sequence)
+      targets = []
+
+      # Replace spans with sentinel tokens and collect targets
+      for idx, (start, end) in enumerate(spans):
+          sentinel = f"<X{idx}>".encode('utf-8')
+          target = byte_sequence[start:end]
+          corrupted[start:end] = sentinel
+          targets.append((sentinel, target))
+
+      return corrupted, targets
+
+
+  def compute_span_loss(original_bytes, predicted_bytes, spans):
+      loss = 0
+    for span_start, span_end in spans:
+        target = original_bytes[span_start:span_end]
+        prediction = predicted_bytes[span_start:span_end]
+        loss += cross_entropy(target, prediction)
+    return loss / len(spans)
+
+
+
+  def prepare_input(text, task_prefix=""):
+    if task_prefix:
+        full_input = f"{task_prefix}: {text}"
+    else:
+        full_input = text
+        # Convert to bytes for model input
+    return full_input.encode('utf-8')
+
+  def prepare_target(text):
+      # For pre-training, only include corrupted spans
+      # For fine-tuning, include full target text
+    return text.encode('utf-8')
+#+end_src
+
+Span corruption dataset integration
+#+begin_src python
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+import random
+from transformers import PreTrainedTokenizerFast
+
+class SpanCorruptionDataset(Dataset):
+    def __init__(self, file_path, tokenizer, max_length=512, corruption_rate=0.15, mean_span_length=20):
+        """
+        Dataset for span corruption pre-training
+
+        Args:
+            file_path (str): Path to input text file
+            tokenizer (PreTrainedTokenizerFast): Tokenizer for processing
+            max_length (int): Maximum sequence length
+            corruption_rate (float): Proportion of bytes to corrupt
+            mean_span_length (int): Average length of corrupted spans
+        """
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.corruption_rate = corruption_rate
+        self.mean_span_length = mean_span_length
+
+        # Read text data
+        with open(file_path, 'r', encoding='utf-8') as f:
+            self.texts = [line.strip() for line in f if line.strip()]
+
+    def _corrupt_spans(self, byte_sequence):
+        """
+        Corrupt spans in the byte sequence
+
+        Args:
+            byte_sequence (bytes): Input byte sequence
+
+        Returns:
+            tuple: (corrupted_sequence, original_spans)
+        """
+        sequence_length = len(byte_sequence)
+        target_corrupt_bytes = int(sequence_length * self.corruption_rate)
+
+        # Convert to bytearray for modification
+        corrupted = bytearray(byte_sequence)
+        spans = []
+        current_corrupt_bytes = 0
+
+        while current_corrupt_bytes < target_corrupt_bytes:
+            # Sample span length from geometric distribution
+            span_length = max(1, np.random.geometric(1/self.mean_span_length))
+
+            # Ensure we don't exceed sequence length
+            if span_length + current_corrupt_bytes > target_corrupt_bytes:
+                span_length = target_corrupt_bytes - current_corrupt_bytes
+
+            # Sample start position
+            valid_starts = sequence_length - span_length
+            if valid_starts <= 0:
+                break
+
+            start = np.random.randint(0, valid_starts)
+
+            # Create sentinel token
+            sentinel = f"<X{len(spans)}>".encode('utf-8')
+
+            # Replace span with sentinel
+            corrupted[start:start+span_length] = sentinel
+
+            # Store original span and its position
+            spans.append((start, start+span_length, byte_sequence[start:start+span_length]))
+
+            current_corrupt_bytes += span_length
+
+        return bytes(corrupted), spans
+
+    def __len__(self):
+        return len(self.texts)
+
+    def __getitem__(self, idx):
+        # Encode text to bytes
+        text_bytes = self.texts[idx].encode('utf-8')
+
+        # Truncate to max length
+        text_bytes = text_bytes[:self.max_length]
+
+        # Perform span corruption
+        corrupted_bytes, spans = self._corrupt_spans(text_bytes)
+
+        # Prepare targets (only corrupted spans)
+        targets = [span[2] for span in spans]
+        target_indices = [span[0] for span in spans]
+
+        return {
+            'input_bytes': corrupted_bytes,
+            'targets': targets,
+            'target_indices': target_indices
+        }
+
+
+  def train(model, dataloader, optimizer, criterion, device, epochs=10):
+      """
+      Training loop for span corruption pre-training
+
+      Args:
+          model (ByT5Model): Model to train
+          dataloader (DataLoader): Data loader with corrupted spans
+          optimizer (torch.optim.Optimizer): Optimization algorithm
+          criterion (nn.Module): Loss function
+          device (torch.device): Training device
+          epochs (int): Number of training epochs
+      """
+      model.train()
+
+      for epoch in range(epochs):
+          total_loss = 0
+
+          for batch in dataloader:
+              # Move data to device
+              input_bytes = torch.tensor(np.frombuffer(batch['input_bytes'], dtype=np.uint8)).to(device)
+
+              # Zero gradients
+              optimizer.zero_grad()
+
+              # Forward pass
+              outputs = model(input_bytes)
+
+              # Compute loss only for corrupted spans
+              loss = 0
+              for target, idx in zip(batch['targets'], batch['target_indices']):
+                  target_bytes = torch.tensor(np.frombuffer(target, dtype=np.uint8)).to(device)
+                  span_output = outputs[idx:idx+len(target_bytes)]
+
+                  # Cross-entropy loss for span reconstruction
+                  loss += criterion(span_output, target_bytes)
+
+              # Backpropagate
+              loss.backward()
+              optimizer.step()
+
+              total_loss += loss.item()
+
+          print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(dataloader)}")
+
+  def main():
+      """
+      Main training script for ByT5 span corruption pre-training
+      """
+      # Set random seeds for reproducibility
+      torch.manual_seed(42)
+      np.random.seed(42)
+      random.seed(42)
+
+      # Device configuration
+      device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+      # Instantiate model
+      model = ByT5Model().to(device)
+
+      # Create dummy tokenizer (for demonstration)
+      class DummyTokenizer:
+          def encode(self, text):
+              return list(text.encode('utf-8'))
+
+      # Create dataset and dataloader
+      dataset = SpanCorruptionDataset(
+          file_path='training_data.txt',  # Replace with your text file path
+          tokenizer=DummyTokenizer(),
+          max_length=512,
+          corruption_rate=0.15
+      )
+
+      dataloader = DataLoader(
+          dataset,
+          batch_size=32,
+          shuffle=True,
+          num_workers=4
+      )
+
+      # Loss and optimizer
+      criterion = nn.CrossEntropyLoss()
+      optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+      # Train the model
+      train(
+          model=model,
+          dataloader=dataloader,
+          optimizer=optimizer,
+          criterion=criterion,
+          device=device,
+          epochs=10
+      )
+
+      # Save the model
+      torch.save(model.state_dict(), 'byt5_model.pth')
+
+  if __name__ == '__main__':
+      main()
+#+end_src
+** Pre training Tokenizer
+#+begin_src python
+  from torch.utils.data import Dataset, DataLoader
+  import torch
+  import numpy as np
+  from dataclasses import dataclass
+  from typing import List, Tuple
+  import random
+
+          @dataclass
+          class SpanCorruptionConfig:
+              mean_span_length: int = 3
+              corruption_rate: float = 0.15
+              max_span_length: int = 10
+
+          class ByT5Style:
+              # Special token IDs (we add these after the 256 ASCII bytes)
+              PAD_ID = 256
+              EOS_ID = 257
+              UNK_ID = 258
+              # Start sentinel tokens from 259 onwards
+              SENTINEL_START = 259
+              SENTINEL_END = 269  # Supporting up to 10 sentinel tokens
+
+              VOCAB_SIZE = SENTINEL_END + 1
+
+          class ByT5Dataset(Dataset):
+              def __init__(
+                      self,
+                      file_path: str,
+                      seq_length: int = 512,
+                      stride: int = None,
+                      span_corruption_config: SpanCorruptionConfig = None
+              ):
+
+                  self.seq_length = seq_length
+                  self.stride = stride if stride else seq_length
+                  self.span_corruption_config = span_corruption_config or SpanCorruptionConfig()
+
+                  # Read all text as ASCII bytes
+                  with open(file_path, 'r', encoding='ascii') as f:
+                      self.data = f.read().encode('ascii')
+
+                  # Split into lines and process lines directly
+                  self.lines = [line.encode('ascii') for line in
+                                open(file_path, 'r', encoding='ascii').readlines()]
+
+                  # Calculate number of sequences
+                  self.n_sequences = sum(
+                      max(1, (len(line) - self.seq_length) // self.seq_length + 1)
+                      for line in self.lines
+                  )
+
+              def _get_random_spans(self, length: int) -> List[Tuple[int, int]]:
+                  """Generate random spans for corruption."""
+                  target_corrupted = int(length * self.span_corruption_config.corruption_rate)
+                  corrupted = 0
+                  spans = []
+
+                  while corrupted < target_corrupted:
+                      # Sample span length from geometric distribution
+                      span_length = min(
+                          np.random.geometric(1 / self.span_corruption_config.mean_span_length),
+                          self.span_corruption_config.max_span_length
+                      )
+
+                      # Ensure we don't corrupt too much
+                      if corrupted + span_length > target_corrupted:
+                          span_length = target_corrupted - corrupted
+
+                      # Random start position
+                      available_positions = length - span_length
+                      if available_positions <= 0:
+                          break
+
+                      start = random.randint(0, available_positions)
+                      spans.append((start, start + span_length))
+                      corrupted += span_length
+
+                  return sorted(spans)
+
+              def _apply_span_corruption(
+                      self,
+                      sequence: bytes
+              ) -> Tuple[torch.Tensor, torch.Tensor]:
+                  """Apply span corruption to create input and target sequences."""
+                  spans = self._get_random_spans(len(sequence))
+
+                  # Create input sequence with sentinel tokens
+                  input_ids = []
+                  target_ids = []
+                  last_position = 0
+                  sentinel_idx = 0
+
+                  for start, end in spans:
+                      # Copy unchanged tokens
+                      input_ids.extend(sequence[last_position:start])
+
+                      # Add sentinel token to input
+                      sentinel_token = ByT5Style.SENTINEL_START + sentinel_idx
+                      input_ids.append(sentinel_token)
+
+                      # Add corrupted span to target with sentinel token
+                      target_ids.append(sentinel_token)
+                      target_ids.extend(sequence[start:end])
+
+                      last_position = end
+                      sentinel_idx = (sentinel_idx + 1) % (ByT5Style.SENTINEL_END - ByT5Style.SENTINEL_START)
+
+                  # Add remaining tokens
+                  input_ids.extend(sequence[last_position:])
+
+                  # Pad sequences to desired length
+                  input_ids = input_ids[:self.seq_length]
+                  input_ids.extend([ByT5Style.PAD_ID] * (self.seq_length - len(input_ids)))
+
+                  target_ids = target_ids[:self.seq_length]
+                  target_ids.extend([ByT5Style.PAD_ID] * (self.seq_length - len(target_ids)))
+
+                  return (
+                      torch.tensor(input_ids, dtype=torch.long),
+                      torch.tensor(target_ids, dtype=torch.long)
+                  )
+
+              def __len__(self):
+                  return self.n_sequences
+
+                def __getitem__(self, idx):
+                    # Iterate through lines to find the right sequence
+                  cumulative_idx = 0
+                  for line in self.lines:
+                      # Determine how many sequences this line will generate
+                      line_sequences = max(1, (len(line) - self.seq_length) // self.seq_length + 1)
+
+                      if idx < cumulative_idx + line_sequences:
+                          # Found the right line
+                          local_idx = idx - cumulative_idx
+
+                          # Handle different line length scenarios
+                          if len(line) <= self.seq_length:
+                              # Short line: pad to full sequence length
+                              sequence = line + b'\x00' * (self.seq_length - len(line))
+                          else:
+                              # Long line: extract specific subsequence
+                              start_pos = local_idx * self.seq_length
+                              sequence = line[start_pos:start_pos + self.seq_length]
+
+                              # Pad if the extracted sequence is too short
+                              if len(sequence) < self.seq_length:
+                                  sequence = sequence + b'\x00' * (self.seq_length - len(sequence))
+
+                          # Apply span corruption
+                          input_ids, target_ids = self._apply_span_corruption(sequence)
+
+                          return {
+                              'input_ids': input_ids,
+                              'target_ids': target_ids
+                          }
+
+                      cumulative_idx += line_sequences
+
+                raise IndexError("Sequence index out of range")
+
+
+          def create_byt5_dataloader(
+                  file_path: str,
+                  batch_size: int = 32,
+                  seq_length: int = 512,
+                  span_corruption_config: SpanCorruptionConfig = None
+          ):
+              """Create a DataLoader with ByT5-style tokenization and span corruption."""
+              dataset = ByT5Dataset(
+                  file_path,
+                  seq_length=seq_length,
+                  span_corruption_config=span_corruption_config
+              )
+
+              return DataLoader(
+                  dataset,
+                  batch_size=batch_size,
+                  shuffle=True,
+                  num_workers=4
+              ), ByT5Style.VOCAB_SIZE
+
+
+          # Example usage:
+        def main():
+            config = SpanCorruptionConfig(
+                mean_span_length=3,
+                corruption_rate=0.15,
+                max_span_length=10
+            )
+
+              dataloader, vocab_size = create_byt5_dataloader(
+                  'your_text_file.txt',
+                  span_corruption_config=config
+              )
+
+              # First batch
+              batch = next(iter(dataloader))
+              print(f"Input shape: {batch['input_ids'].shape}")
+              print(f"Target shape: {batch['target_ids'].shape}")
+
+          if __name__ == "__main__":
+              main()
+#+end_src
+** Architecture
+*** b VAE
+
+#+begin_src python
+import torch
+import torch.nn as nn
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+
+# Define the VAE model
+class VAE(nn.Module):
+    def __init__(self, latent_dim=20):
+        super(VAE, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(784, 400),
+            nn.ReLU(),
+        )
+        self.fc_mu = nn.Linear(400, latent_dim)
+        self.fc_logvar = nn.Linear(400, latent_dim)
+
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 400),
+            nn.ReLU(),
+            nn.Linear(400, 784),
+            nn.Sigmoid()
+        )
+
+    def encode(self, x):
+        h = self.encoder(x)
+        return self.fc_mu(h), self.fc_logvar(h)
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return mu + eps*std
+
+    def decode(self, z):
+        return self.decoder(z)
+
+    def forward(self, x):
+        mu, logvar = self.encode(x.view(-1, 784))
+        z = self.reparameterize(mu, logvar)
+        return self.decode(z), mu, logvar
+
+# Loss function
+class VAELoss(nn.Module):
+    def __init__(self):
+        super(VAELoss, self).__init__()
+        self.bce_loss = nn.BCELoss(reduction='sum')
+
+    def forward(self, recon_x, x, mu, logvar):
+        BCE = self.bce_loss(recon_x, x.view(-1, 784))
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+        return BCE + KLD
+
+# Training function
+def train(model, device, train_loader, optimizer, loss_function, epoch):
+    model.train()
+    for batch_idx, (data, _) in enumerate(train_loader):
+        data = data.to(device)
+        optimizer.zero_grad()
+        recon_batch, mu, logvar = model(data)
+        loss = loss_function(recon_batch, data, mu, logvar)
+        loss.backward()
+        optimizer.step()
+        if batch_idx % 100 == 0:
+            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} '
+                  f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+
+# Main training loop
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load MNIST dataset
+    train_loader = DataLoader(
+        datasets.MNIST('../data', train=True, download=True,
+                       transform=transforms.ToTensor()),
+        batch_size=128, shuffle=True)
+
+    model = VAE().to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+    loss_function = VAELoss()
+
+    for epoch in range(1, 11):
+        train(model, device, train_loader, optimizer, loss_function, epoch)
+
+if __name__ == '__main__':
+    main()
+#+end_src
+
+*** byt5
+#+begin_src python
+  import torch
+  import torch.nn as nn
+  import torch.nn.functional as F
+
+  class ByT5Encoder(nn.Module):
+      def __init__(self, d_model, nhead, num_layers, dim_feedforward):
+          super().__init__()
+          self.embedding = nn.Embedding(256, d_model)  # 256 possible byte values
+          encoder_layer = nn.TransformerEncoderLayer(d_model, nhead, dim_feedforward)
+          self.encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+
+      def forward(self, src):
+          src = self.embedding(src)
+          return self.encoder(src)
+
+  class ByT5Decoder(nn.Module):
+      def __init__(self, d_model, nhead, num_layers, dim_feedforward):
+          super().__init__()
+          self.embedding = nn.Embedding(256, d_model)
+          decoder_layer = nn.TransformerDecoderLayer(d_model, nhead, dim_feedforward)
+          self.decoder = nn.TransformerDecoder(decoder_layer, num_layers)
+
+      def forward(self, tgt, memory):
+          tgt = self.embedding(tgt)
+          return self.decoder(tgt, memory)
+
+  class ByT5(nn.Module):
+      def __init__(self, d_model=512, nhead=8, num_encoder_layers=6,
+                   num_decoder_layers=6, dim_feedforward=2048):
+          super().__init__()
+          self.encoder = ByT5Encoder(d_model, nhead, num_encoder_layers, dim_feedforward)
+          self.decoder = ByT5Decoder(d_model, nhead, num_decoder_layers, dim_feedforward)
+          self.output_proj = nn.Linear(d_model, 256)  # Project back to byte space
+
+      def forward(self, src, tgt):
+          memory = self.encoder(src)
+          output = self.decoder(tgt, memory)
+          return self.output_proj(output)
+
+      def encode(self, src):
+          return self.encoder(src)
+
+      def decode(self, tgt, memory):
+          output = self.decoder(tgt, memory)
+          return self.output_proj(output)
+
+  class ByT5Loss(nn.Module):
+      def __init__(self, ignore_index=-100):
+          super().__init__()
+          self.loss_fn = nn.CrossEntropyLoss(ignore_index=ignore_index)
+
+      def forward(self, logits, targets):
+          # logits shape: [batch_size, sequence_length, 256]
+          # targets shape: [batch_size, sequence_length]
+          return self.loss_fn(logits.view(-1, 256), targets.view(-1))
+
+  # convert text to byte tensors
+  def text_to_bytes(text):
+      return torch.tensor([ord(c) for c in text.encode('utf-8')], dtype=torch.long)
+
+  # Example usage
+  model = ByT5()
+  src_text = "Hello, world!"
+  tgt_text = "Bonjour, monde!"
+
+  src = text_to_bytes(src_text).unsqueeze(0)  # Add batch dimension
+  tgt = text_to_bytes(tgt_text).unsqueeze(0)
+
+  output = model(src, tgt)
+  print(output.shape)  # Should be [1, tgt_len, 256]
+#+end_src
+
+Data loader and main training loop implemented in pytorch
+#+begin_src python
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import numpy as np
+
+class ByteTranslationDataset(Dataset):
+    def __init__(self, src_texts, tgt_texts):
+        self.src_bytes = [self.text_to_bytes(text) for text in src_texts]
+        self.tgt_bytes = [self.text_to_bytes(text) for text in tgt_texts]
+
+    def text_to_bytes(self, text):
+        return torch.tensor([ord(c) for c in text.encode('utf-8')], dtype=torch.long)
+
+    def __len__(self):
+        return len(self.src_bytes)
+
+    def __getitem__(self, idx):
+        return {
+            'src_bytes': self.src_bytes[idx],
+            'tgt_bytes': self.tgt_bytes[idx]
+        }
+
+def collate_fn(batch):
+    # Pad sequences to the same length within a batch
+    src_bytes = [item['src_bytes'] for item in batch]
+    tgt_bytes = [item['tgt_bytes'] for item in batch]
+
+    # Pad sequences
+    src_bytes = torch.nn.utils.rnn.pad_sequence(src_bytes, batch_first=True, padding_value=0)
+    tgt_bytes = torch.nn.utils.rnn.pad_sequence(tgt_bytes, batch_first=True, padding_value=0)
+
+    return {
+        'src_bytes': src_bytes,
+        'tgt_bytes': tgt_bytes
+    }
+
+def train_epoch(model, dataloader, optimizer, loss_fn, device):
+    model.train()
+    total_loss = 0
+
+    for batch in dataloader:
+        # Move data to device
+        src_bytes = batch['src_bytes'].to(device)
+        tgt_bytes = batch['tgt_bytes'].to(device)
+
+        # Zero the gradients
+        optimizer.zero_grad()
+
+        # Forward pass
+        # Use teacher forcing during training
+        logits = model(src_bytes, tgt_bytes[:, :-1])  # Remove last token for teacher forcing
+
+        # Compute loss
+        loss = loss_fn(logits, tgt_bytes[:, 1:])  # Shift target by one for prediction
+
+        # Backward pass
+        loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        # Optimizer step
+        optimizer.step()
+
+        # Accumulate loss
+        total_loss += loss.item()
+
+    return total_loss / len(dataloader)
+
+def main():
+    # Hyperparameters
+    BATCH_SIZE = 32
+    LEARNING_RATE = 1e-4
+    NUM_EPOCHS = 10
+    D_MODEL = 512
+    NHEAD = 8
+    NUM_ENCODER_LAYERS = 6
+    NUM_DECODER_LAYERS = 6
+    DIM_FEEDFORWARD = 2048
+
+    # Device configuration
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Create sample data
+    src_texts = [
+        "Hello world",
+        "Machine learning is fascinating",
+        "Natural language processing",
+    ]
+    tgt_texts = [
+        "Bonjour monde",
+        "L'apprentissage automatique est fascinant",
+        "Traitement du langage naturel",
+    ]
+
+    # Create dataset and dataloader
+    dataset = ByteTranslationDataset(src_texts, tgt_texts)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        collate_fn=collate_fn
+    )
+
+    # Initialize model
+    model = ByT5(
+        d_model=D_MODEL,
+        nhead=NHEAD,
+        num_encoder_layers=NUM_ENCODER_LAYERS,
+        num_decoder_layers=NUM_DECODER_LAYERS,
+        dim_feedforward=DIM_FEEDFORWARD
+    ).to(device)
+
+    # Loss function
+    loss_fn = ByT5Loss().to(device)
+
+    # Optimizer
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # Learning rate scheduler
+    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',
+        factor=0.5,
+        patience=3
+    )
+
+    # Training loop
+    for epoch in range(NUM_EPOCHS):
+        train_loss = train_epoch(model, dataloader, optimizer, loss_fn, device)
+
+        print(f"Epoch {epoch+1}/{NUM_EPOCHS}")
+        print(f"Training Loss: {train_loss:.4f}")
+
+        # Update learning rate
+        lr_scheduler.step(train_loss)
+
+    # Save the model
+    torch.save(model.state_dict(), 'byt5_model.pth')
+
+if __name__ == '__main__':
+    main()
+#+end_src
+** Latent Sampling
+
+Random Sampling:
+#+begin_src python
+  def sample_latent_space(model, num_samples):
+      # Sample from standard normal distribution
+      z = torch.randn(num_samples, model.latent_dim)
+
+      # Optionally, pass through decoder to generate samples
+      with torch.no_grad():
+          reconstructed_samples = model.decoder(z)
+
+      return reconstructed_samples
+#+end_src
+
+
+Interpolation Sampling:
+#+begin_src python
+  def interpolate_latent_space(model, z1, z2, num_steps=10):
+      # Linear interpolation between two points in latent space
+      alphas = torch.linspace(0, 1, num_steps)
+      interpolated_samples = []
+
+      with torch.no_grad():
+          for alpha in alphas:
+              z_interp = (1 - alpha) * z1 + alpha * z2
+              sample = model.decoder(z_interp)
+              interpolated_samples.append(sample)
+
+      return torch.stack(interpolated_samples)
+#+end_src
+
+Visualizing Disentangled Clusters
+#+begin_src python
+  import umap
+  import matplotlib.pyplot as plt
+  import seaborn as sns
+
+  def visualize_latent_space(model, dataloader):
+      # Collect latent representations
+      latent_reps = []
+      labels = []
+
+      with torch.no_grad():
+          for batch, label in dataloader:
+              # Get mu from encoder
+              mu, _ = model.encoder(batch)
+              latent_reps.append(mu)
+              labels.append(label)
+
+      # Concatenate and reduce dimensionality
+      latent_reps = torch.cat(latent_reps)
+      labels = torch.cat(labels)
+
+      # Use UMAP for dimensionality reduction
+      reducer = umap.UMAP(n_components=2)
+      reduced_reps = reducer.fit_transform(latent_reps.cpu().numpy())
+
+      # Plot
+      plt.figure(figsize=(10, 8))
+      scatter = plt.scatter(reduced_reps[:, 0], reduced_reps[:, 1],
+                            c=labels, cmap='viridis')
+      plt.colorbar(scatter)
+      plt.title('Latent Space Visualization')
+      plt.show()
+#+end_src
+
+
+  For cluster identification use
+  K-Means clustering
+  DBSCAN
+  Gaussian Mixture Models
+
+Cluster Identification and Sampling
+#+begin_src python
+  from sklearn.cluster import KMeans
+
+  def identify_and_sample_clusters(model, latent_reps, n_clusters=5):
+      # Cluster latent representations
+      kmeans = KMeans(n_clusters=n_clusters)
+      cluster_labels = kmeans.fit_predict(latent_reps.cpu().numpy())
+
+      # Get cluster centroids
+      cluster_centroids = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)
+
+      # Sample from each cluster
+      cluster_samples = []
+      with torch.no_grad():
+          for centroid in cluster_centroids:
+              # Reconstruct from cluster centroid
+              sample = model.decoder(centroid.unsqueeze(0))
+              cluster_samples.append(sample)
+
+      return cluster_samples, cluster_labels
+#+end_src
+
+Traversing Latent Dimensions
+#+begin_src python
+    pythonCopydef traverse_latent_dimension(model, base_sample, dim_index, num_steps=10):
+        # Create copies of base sample, varying one dimension
+        traversal_samples = []
+        std_range = torch.linspace(-3, 3, num_steps)
+
+        with torch.no_grad():
+            for std in std_range:
+                # Create a copy of base sample and modify specific dimension
+                traversal_sample = base_sample.clone()
+                traversal_sample[:, dim_index] = std
+
+                # Reconstruct
+                reconstructed = model.decoder(traversal_sample)
+                traversal_samples.append(reconstructed)
+
+        return torch.stack(traversal_samples)
+#+end_src
+
+* Resources
+** links
+comprehensive VAE with tensorboard
+https://hunterheidenreich.com/posts/modern-variational-autoencoder-in-pytorch/
+implement then sample/visualize a t model
+https://towardsdatascience.com/a-complete-guide-to-write-your-own-transformers-29e23f371ddd
+implemented collection of vae in pytorch
+https://github.com/AntixK/PyTorch-VAE
+concepts from autoencoder to BVAE
+https://lilianweng.github.io/posts/2018-08-12-vae/
