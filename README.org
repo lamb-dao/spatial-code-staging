@@ -1,128 +1,155 @@
-* Data preparation
+* Spatial data preparation
 ** Spatial Operations
 
 Make common QGIS map ops reproducible by directly calling gdal via interop
 #+begin_src lisp
-  (defun layers-from-paths ()
-    "finds tiffs in copied dir"
+      (defun layers-from-paths ()
+        "finds tiffs in copied dir"
 
-    ;; go to disk region of copied data
-    (cd "/")
-                                          ; match the path
-                                          ; &&&test is 1 item before firsting
-                                          ; get car
-                                          ; make #P<> a string
-                                          ; go there and report
-    (cd (path (first (directory "bulk-1/**/*COPY"))))
-    (format t "Collecting layers from: ~A~%" (pwd))
-                                          ; return string representation of files
-    (set-difference
-     (mapcar #'path (finder (path~ "index") (path~ "indices") (extension= "tif")))
-     (mapcar #'path (finder (path~ "tiles")))
-     :test #'equal))
+        ;; go to disk region of copied data
+        (cd "/")
+                                              ; match the path
+                                              ; &&&test is 1 item before firsting
+                                              ; get car
+                                              ; make #P<> a string
+                                              ; go there and report
+        (cd (path (first (directory "bulk-1/**/*COPY"))))
+        (format t "Collecting layers from: ~A~%" (pwd))
+                                              ; return string representation of files
+        (set-difference
+         (mapcar #'path (finder (path~ "index") (path~ "indices") (extension= "tif")))
+         (mapcar #'path (finder (path~ "tiles")))
+         :test #'equal))
 
-  (defun layer-name-from-path (path)
-    "extracts the tiff color layer name from a pix4d path"
-                                          ; keep after /indices/
-                                          ; keep before first /
-    (first (split "/" (second (split "/indices/" path)))))
+      (defun layer-name-from-path (path)
+        "extracts the tiff color layer name from a pix4d path"
+                                              ; keep after /indices/
+                                              ; keep before first /
+        (first (split "/" (second (split "/indices/" path)))))
 
-  (defun layer-date-from-path (path)
-    "&&& extracts the tiff date from our pix4d paths"
-                                          ; keep after &&&
-                                          ; keep before first &&&
-    (first (split "&&&" (second (split "&&&" path)))))
+      (defun layer-date-from-path (path)
+        "&&& extracts the tiff date from our pix4d paths"
+                                              ; keep after &&&
+                                              ; keep before first &&&
+        (first (split "&&&" (second (split "&&&" path)))))
 
-  (defun gather-for-gdal ()
-    "&&&"
-    (let* ((west-files (layers-from-paths))
-           (indices (mapcar #'layer-name-from-path west-files))
-           (indices-s (sort (copy-list indices) #'string<))
-           (expected-i '("red_edge" "red" "nir" "ndvi" "green" "blue" "Sentera_NDRE"))
-           (expected-is (sort (copy-list expected-i) #'string<))
-           (expected-n (length expected-i)))
-                                          ; test length
-      (assert (= expected-n
-                 (length west-files))
-              () "Unexpected n items, recieved: ~D" (length west-files))
-                                          ; test contents
-      (assert (equal expected-is
-                     indices-s)
-              () "Indices do not match expected values
-                Expected:~%~S
-                Recieved:~%~S" expected-is indices-s)
-      (dolist (f west-files)
-        (print f))
-      (dolist (i indices)
-        (print i))
-      (y-or-n-p "With these files; Continue?")
-      (values west-files indices)
-      ))
+      (defun gather-for-gdal ()
+        "&&&"
+        (let* ((west-files (layers-from-paths))
+               (indices (mapcar #'layer-name-from-path west-files))
+               (indices-s (sort (copy-list indices) #'string<))
+               (expected-i '("red_edge" "red" "nir" "ndvi" "green" "blue" "Sentera_NDRE"))
+               (expected-is (sort (copy-list expected-i) #'string<))
+               (expected-n (length expected-i)))
+                                              ; test length
+          (assert (= expected-n
+                     (length west-files))
+                  () "Unexpected n items, recieved: ~D" (length west-files))
+                                              ; test contents
+          (assert (equal expected-is
+                         indices-s)
+                  () "Indices do not match expected values
+                    Expected:~%~S
+                    Recieved:~%~S" expected-is indices-s)
+          (dolist (f west-files)
+            (print f))
+          (dolist (i indices)
+            (print i))
+          (y-or-n-p "With these files; Continue?")
+          (values west-files indices)
+          ))
 
-  (defparameter west-files (gather-for-gdal))
+      (defparameter west-files (gather-for-gdal))
 
-  (defun gdalinfo (datasetname)
-    "usage: gdalinfo [--help-general] [-json] [-mm] [-stats | -approx_stats] [-hist] [-nogcp] [-nomd]
-                  [-norat] [-noct] [-nofl] [-checksum] [-proj4]
-                  [-listmdd] [-mdd domain|`all`] [-wkt_format wkt1|wkt2|...]*
-                  [-sd subdataset] [-oo name=value]* [-if format]* datasetname"
+      (defun gdalinfo (datasetname)
+        "usage: gdalinfo [--help-general] [-json] [-mm] [-stats | -approx_stats] [-hist] [-nogcp] [-nomd]
+                      [-norat] [-noct] [-nofl] [-checksum] [-proj4]
+                      [-listmdd] [-mdd domain|`all`] [-wkt_format wkt1|wkt2|...]*
+                      [-sd subdataset] [-oo name=value]* [-if format]* datasetname"
 
-    ($cmd (format nil "gdalinfo ~a" datasetname )))
-  (gdalinfo (first west-files))
+        ($cmd (format nil "gdalinfo ~a" datasetname )))
+      (gdalinfo (first west-files))
 
-  (defun gdal-edit (color datasetname)
-    "Usage: gdal_edit [--help-general] [-ro] [-a_srs srs_def]
-                   [-a_ullr ulx uly lrx lry] [-a_ulurll ulx uly urx ury llx lly]
-                   [-tr xres yres] [-unsetgt] [-unsetrpc] [-a_nodata value] [-unsetnodata]
-                   [-offset value] [-scale value] [-units value]
-                   [-colorinterp_X red|green|blue|alpha|grayundefined]*
-                   [-unsetstats] [-stats] [-approx_stats]
-                   [-setstats min max mean stddev]
-                   [-gcp pixel line easting northing [elevation]]*
-                   [-unsetmd] [-oo NAME=VALUE]* [-mo META-TAG=VALUE]*  datasetname"
-
-
-    ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" color datasetname)))
-
-  (call-gdal-edit (first west-files))
-
-  ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" "asdfasdfh" (first west-files)))
-  (call-gdalinfo (first west-files))
-
-  (defun gdalwarp-&&& (srcfile dstfile)
-    " Usage: gdalwarp [--help-general] [--formats]
-      [-s_srs srs_def] [-t_srs srs_def] [-to NAME=VALUE]* [-vshift  -novshift]
-      [[-s_coord_epoch epoch] | [-t_coord_epoch epoch]]
-      [-order n | -tps | -rpc | -geoloc] [-et err_threshold]
-      [-refine_gcps tolerance [minimum_gcps]]
-      [-te xmin ymin xmax ymax] [-tr xres yres] [-tap] [-ts width height]
-      [-ovr level|AUTO|AUTO-n|NONE] [-wo NAME=VALUE] [-ot Byte/Int16/...] [-wt Byte/Int16]
-      [-srcnodata value [value...]] [-dstnodata value [value...]] -dstalpha
-      [-r resampling_method] [-wm memory_in_mb] [-multi] [-q]
-      [-cutline datasource] [-cl layer] [-cwhere expression]
-      [-csql statement] [-cblend dist_in_pixels] [-crop_to_cutline]
-      [-if format]* [-of format] [-co NAME=VALUE]* [-overwrite]
-      [-nomd] [-cvmd meta_conflict_value] [-setci] [-oo NAME=VALUE]*
-      [-doo NAME=VALUE]*
-      srcfile* dstfile
-
-      Available resampling methods:
-          near (default), bilinear, cubic, cubicspline, lanczos, average, rms,
-          mode,  max, min, med, Q1, Q3, sum. "
-    ($cmd (format nil "gdalwarp  ~A ~A" srcfile dstfile)))
-  (gdalwarp-&&& (first west-files) "test.tif")
-
-  (defun gdal_merge (outfile raster1 raster2)
-  " Usage: gdal_merge.py [-o out_filename] [-of out_format] [-co NAME=VALUE]*
-                       [-ps pixelsize_x pixelsize_y] [-tap] [-separate] [-q] [-v] [-pct]
-                       [-ul_lr ulx uly lrx lry] [-init \"value [value...]\"]
-                       [-n nodata_value] [-a_nodata output_nodata_value]
-                       [-ot datatype] [-createonly] input_files
-                       [--help-general]
-  gdal_merge.py -o merged.tif -of GTiff input1.tif input2.tif")
+      (defun gdal-edit (color datasetname)
+        "Usage: gdal_edit [--help-general] [-ro] [-a_srs srs_def]
+                       [-a_ullr ulx uly lrx lry] [-a_ulurll ulx uly urx ury llx lly]
+                       [-tr xres yres] [-unsetgt] [-unsetrpc] [-a_nodata value] [-unsetnodata]
+                       [-offset value] [-scale value] [-units value]
+                       [-colorinterp_X red|green|blue|alpha|grayundefined]*
+                       [-unsetstats] [-stats] [-approx_stats]
+                       [-setstats min max mean stddev]
+                       [-gcp pixel line easting northing [elevation]]*
+                       [-unsetmd] [-oo NAME=VALUE]* [-mo META-TAG=VALUE]*  datasetname"
 
 
+        ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" color datasetname)))
 
+      (call-gdal-edit (first west-files))
+
+      ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" "asdfasdfh" (first west-files)))
+      (call-gdalinfo (first west-files))
+
+      (defun gdalwarp-&&& (srcfile dstfile)
+        " Usage: gdalwarp [--help-general] [--formats]
+          [-s_srs srs_def] [-t_srs srs_def] [-to NAME=VALUE]* [-vshift  -novshift]
+          [[-s_coord_epoch epoch] | [-t_coord_epoch epoch]]
+          [-order n | -tps | -rpc | -geoloc] [-et err_threshold]
+          [-refine_gcps tolerance [minimum_gcps]]
+          [-te xmin ymin xmax ymax] [-tr xres yres] [-tap] [-ts width height]
+          [-ovr level|AUTO|AUTO-n|NONE] [-wo NAME=VALUE] [-ot Byte/Int16/...] [-wt Byte/Int16]
+          [-srcnodata value [value...]] [-dstnodata value [value...]] -dstalpha
+          [-r resampling_method] [-wm memory_in_mb] [-multi] [-q]
+          [-cutline datasource] [-cl layer] [-cwhere expression]
+          [-csql statement] [-cblend dist_in_pixels] [-crop_to_cutline]
+          [-if format]* [-of format] [-co NAME=VALUE]* [-overwrite]
+          [-nomd] [-cvmd meta_conflict_value] [-setci] [-oo NAME=VALUE]*
+          [-doo NAME=VALUE]*
+          srcfile* dstfile
+
+          Available resampling methods:
+              near (default), bilinear, cubic, cubicspline, lanczos, average, rms,
+              mode,  max, min, med, Q1, Q3, sum. "
+        ($cmd (format nil "gdalwarp  ~A ~A" srcfile dstfile)))
+      (gdalwarp-&&& (first west-files) "test.tif")
+
+      (defun gdal_merge (outfile raster1 raster2)
+      " Usage: gdal_merge.py [-o out_filename] [-of out_format] [-co NAME=VALUE]*
+                           [-ps pixelsize_x pixelsize_y] [-tap] [-separate] [-q] [-v] [-pct]
+                           [-ul_lr ulx uly lrx lry] [-init \"value [value...]\"]
+                           [-n nodata_value] [-a_nodata output_nodata_value]
+                           [-ot datatype] [-createonly] input_files
+                           [--help-general]
+      gdal_merge.py -o merged.tif -of GTiff input1.tif input2.tif")
+
+    #layernames in a gpkg
+    ogrinfo ~/qgis/AOI-buffered.gpkg
+
+  #fill nodata
+  gdal_fillnodata.py 2023-07-04_bgr.tif OUTPUT.tif -md 100 -si 11 -of GTiff
+
+  usage: gdal_fillnodata.py [-h] [-q] [-md max_distance] [-si smoothing_iterations] [-o [name=value ...]] [-mask filename] [-b band] [-of gdal_format] [-co [name=value ...]] src_filename dst_filename
+
+  Fill raster regions by interpolation from edges
+  -------------------------------------------------
+  It Fills selection regions (usually nodata areas)
+  by interpolating from valid pixels around the edges of the area.
+  Additional details on the algorithm are available in the GDALFillNodata() docs.
+
+  positional arguments:
+    src_filename          The source raster file used to identify target pixels. Only one band is used.
+    dst_filename          The new file to create with the interpolated result. If not provided, the source band is updated in place.
+
+  options:
+    -h, --help            show this help message and exit
+    -q, -quiet            The script runs in quiet mode. The progress monitor is suppressed and routine messages are not displayed.
+    -md max_distance      The maximum distance (in pixels) that the algorithm will search out for values to interpolate. The default is 100 pixels.
+    -si smoothing_iterations
+                          The number of 3x3 average filter smoothing iterations to run after the interpolation to dampen artifacts. The default is zero smoothing iterations.
+    -o [name=value ...]   Specify a special argument to the algorithm.
+    -mask filename        Use the first band of the specified file as a validity mask (zero is invalid, non-zero is valid).
+    -b band, -band band   The band to operate on, defaults to 1.
+    -of gdal_format       Select the output format. Use the short format name.
+    -co [name=value ...]  Creation options for the destination dataset.
 #+end_src
 
 gaussian blur not specific to spatial software ensuring spatial metadata preservation
@@ -320,6 +347,595 @@ Alist data format using :keywords
 (get-points-at-time sequences "2024-01-01T10:00:00")
 
 #+end_src
+
+* eo-learn
+** setup
+
+#+begin_src python
+
+  # Jupyter notebook related
+  %reload_ext autoreload
+  %autoreload 2
+  %matplotlib inline
+
+  import datetime
+  import itertools
+
+  # Built-in modules
+  import os
+
+  # Basics of Python data handling and visualization
+  import numpy as np
+  from aenum import MultiValueEnum
+
+  np.random.seed(42)
+  import geopandas as gpd
+  import joblib
+
+  # Machine learning
+  import lightgbm as lgb
+  import matplotlib.pyplot as plt
+  from matplotlib.colors import BoundaryNorm, ListedColormap
+  from shapely.geometry import Polygon
+  from sklearn import metrics, preprocessing
+  from tqdm.auto import tqdm
+
+  from sentinelhub import DataCollection, UtmZoneSplitter
+
+  # Imports from eo-learn and sentinelhub-py
+  from eolearn.core import (
+      EOExecutor,
+      EOPatch,
+      EOTask,
+      EOWorkflow,
+      FeatureType,
+      LoadTask,
+      MergeFeatureTask,
+      OverwritePermission,
+      SaveTask,
+      linearly_connect_tasks,
+  )
+  from eolearn.features import NormalizedDifferenceIndexTask, SimpleFilterTask
+  from eolearn.features.extra.interpolation import LinearInterpolationTask
+  from eolearn.geometry import ErosionTask, VectorToRasterTask
+  from eolearn.io import ExportToTiffTask, SentinelHubInputTask, VectorImportTask &&& ImportFromTiffTask
+  from eolearn.ml_tools import FractionSamplingTask+begin_src python
+#+end_src
+
+** data load
+*** parse layers gpkg
+**** define aoi
+
+#+begin_src python
+#+end_src
+
+
+#+begin_src python
+  # Folder where data for running the notebook is stored
+DATA_FOLDER = os.path.join("..", "..", "example_data")
+# Locations for collected data and intermediate results
+EOPATCH_FOLDER = os.path.join(".", "eopatches")
+EOPATCH_SAMPLES_FOLDER = os.path.join(".", "eopatches_sampled")
+RESULTS_FOLDER = os.path.join(".", "results")
+for folder in (EOPATCH_FOLDER, EOPATCH_SAMPLES_FOLDER, RESULTS_FOLDER):
+    os.makedirs(folder, exist_ok=True)
+
+# Load geojson file
+country = gpd.read_file(os.path.join(DATA_FOLDER, "svn_border.geojson"))
+# Add 500m buffer to secure sufficient data near border
+country = country.buffer(500)
+
+# Get the country's shape in polygon format
+country_shape = country.geometry.values[0]
+
+# Plot country
+country.plot()
+plt.axis("off")
+
+# Print size
+country_width = country_shape.bounds[2] - country_shape.bounds[0]
+country_height = country_shape.bounds[3] - country_shape.bounds[1]
+print(f"Dimension of the area is {country_width:.0f} x {country_height:.0f} m2")
+#+end_src
+**** identify layers
+
+#+begin_src python
+&&& gpgk info to list and filter
+#+end_src
+
+*** eo-learn input task
+**** load layers to patch
+
+#+begin_src python
+####Define custom EOTasks
+class SentinelHubValidDataTask(EOTask):
+    """
+    Combine Sen2Cor's classification map with `IS_DATA` to define a `VALID_DATA_SH` mask
+    The SentinelHub's cloud mask is asumed to be found in eopatch.mask['CLM']
+    """
+
+    def __init__(self, output_feature):
+        self.output_feature = output_feature
+
+    def execute(self, eopatch):
+        eopatch[self.output_feature] = eopatch.mask["IS_DATA"].astype(bool) & (~eopatch.mask["CLM"].astype(bool))
+        return eopatch
+
+
+class AddValidCountTask(EOTask):
+    """
+    The task counts number of valid observations in time-series and stores the results in the timeless mask.
+    """
+
+    def __init__(self, count_what, feature_name):
+        self.what = count_what
+        self.name = feature_name
+
+    def execute(self, eopatch):
+        eopatch[FeatureType.MASK_TIMELESS, self.name] = np.count_nonzero(eopatch.mask[self.what], axis=0)
+        return eopatch
+
+#### Define the workflow tasks
+# BAND DATA
+# Add a request for S2 bands.
+# Here we also do a simple filter of cloudy scenes (on tile level).
+# The s2cloudless masks and probabilities are requested via additional data.
+band_names = ["B02", "B03", "B04", "B08", "B11", "B12"]
+add_data = SentinelHubInputTask(
+    bands_feature=(FeatureType.DATA, "BANDS"),
+    bands=band_names,
+    resolution=10,
+    maxcc=0.8,
+    time_difference=datetime.timedelta(minutes=120),
+    data_collection=DataCollection.SENTINEL2_L1C,
+    additional_data=[(FeatureType.MASK, "dataMask", "IS_DATA"), (FeatureType.MASK, "CLM"), (FeatureType.DATA, "CLP")],
+    max_threads=5,
+)
+
+
+# CALCULATING NEW FEATURES
+# NDVI: (B08 - B04)/(B08 + B04)
+# NDWI: (B03 - B08)/(B03 + B08)
+# NDBI: (B11 - B08)/(B11 + B08)
+ndvi = NormalizedDifferenceIndexTask(
+    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDVI"), [band_names.index("B08"), band_names.index("B04")]
+)
+ndwi = NormalizedDifferenceIndexTask(
+    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDWI"), [band_names.index("B03"), band_names.index("B08")]
+)
+ndbi = NormalizedDifferenceIndexTask(
+    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDBI"), [band_names.index("B11"), band_names.index("B08")]
+)
+
+
+# VALIDITY MASK
+# Validate pixels using SentinelHub's cloud detection mask and region of acquisition
+add_sh_validmask = SentinelHubValidDataTask((FeatureType.MASK, "IS_VALID"))
+
+# COUNTING VALID PIXELS
+# Count the number of valid observations per pixel using valid data mask
+add_valid_count = AddValidCountTask("IS_VALID", "VALID_COUNT")
+
+# SAVING TO OUTPUT (if needed)
+save = SaveTask(EOPATCH_FOLDER, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)+begin_src python
+#+end_src
+
+**** define timestamps
+
+#+begin_src python
+  &&& ensure timestamps from gpgk are transferred
+#+end_src
+
+*** parse segment gpkg
+**** create reference map task
+
+the segment gpgk file contains polygons and their corresponding labels
+
+Ensure compatibility with eolearn LULC rasterization
+eg gpgk for 10 segments
+lulcid = 0, name = no data
+lulcid = 1, name = cultivated land
+lulcid = 2, name = forest
+lulcid = 3, name = grassland
+lulcid = 4, name = shrubland
+lulcid = 5, name = water
+lulcid = 6, name = wetlands
+lulcid = 7, name = tundra
+lulcid = 8, name = artificial surface
+lulcid = 9, name = bareland
+lulcid = 10, name = snow and ice
+
+eg
+land cover enum definition
+#+begin_src python
+  class LULC(MultiValueEnum):
+    """Enum class containing basic LULC types"""
+
+    # &&& create text block programatically from gpgk parser
+    NO_DATA = "No Data", 0, "#ffffff"
+    CULTIVATED_LAND = "Cultivated Land", 1, "#ffff00"
+    FOREST = "Forest", 2, "#054907"
+    GRASSLAND = "Grassland", 3, "#ffa500"
+    SHRUBLAND = "Shrubland", 4, "#806000"
+    WATER = "Water", 5, "#069af3"
+    WETLAND = "Wetlands", 6, "#95d0fc"
+    TUNDRA = "Tundra", 7, "#967bb6"
+    ARTIFICIAL_SURFACE = "Artificial Surface", 8, "#dc143c"
+    BARELAND = "Bareland", 9, "#a6a6a6"
+    SNOW_AND_ICE = "Snow and Ice", 10, "#000000"
+
+    @property
+    def id(self):
+        return self.values[1]
+
+    @property
+    def color(self):
+        return self.values[2]
+
+
+# Reference colormap things
+lulc_cmap = ListedColormap([x.color for x in LULC], name="lulc_cmap")
+lulc_norm = BoundaryNorm([x - 0.5 for x in range(len(LULC) + 1)], lulc_cmap.N)
+#+end_src
+
+**** convert vector segments to raster
+
+#+begin_src python
+  land_use_ref_path = os.path.join(DATA_FOLDER, "land_use_10class_reference_slovenia_partial.gpkg")
+  vector_feature = FeatureType.VECTOR_TIMELESS, "LULC_REFERENCE"
+
+  vector_import_task = VectorImportTask(vector_feature, land_use_ref_path)
+
+  rasterization_task = VectorToRasterTask(
+      vector_feature,
+      (FeatureType.MASK_TIMELESS, "LULC"),
+      values_column="lulcid",
+      raster_shape=(FeatureType.MASK, "IS_DATA"),
+      raster_dtype=np.uint8,
+  )
+#+end_src
+
+**** run workflow
+
+#+begin_src python
+  # Define the workflow
+workflow_nodes = linearly_connect_tasks(
+    add_data, ndvi, ndwi, ndbi, add_sh_validmask, add_valid_count, vector_import_task, rasterization_task, save
+)
+workflow = EOWorkflow(workflow_nodes)
+# Time interval for the SH request
+time_interval = ["2019-01-01", "2019-12-31"]
+
+# Define additional parameters of the workflow
+input_node = workflow_nodes[0]
+save_node = workflow_nodes[-1]
+execution_args = []
+for idx, bbox in enumerate(bbox_list[patch_ids]):
+    execution_args.append(
+        {
+            input_node: {"bbox": bbox, "time_interval": time_interval},
+            save_node: {"eopatch_folder": f"eopatch_{idx}"},
+        }
+    )
+
+# Execute the workflow
+executor = EOExecutor(workflow, execution_args, save_logs=True)
+executor.run(workers=4)
+
+executor.make_report()
+
+failed_ids = executor.get_failed_executions()
+if failed_ids:
+    raise RuntimeError(
+        f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
+        f"For more info check report at {executor.get_report_path()}"
+    )
+#+end_src
+
+*** verify loaded dataset
+
+#+begin_src python
+      # check data structure
+          EOPatch.load('./eopatches/eopatch_0/')
+
+          eopatch.timestamps
+          eopatch.mask['LULC']
+          eopatch.data['NDVI'][0]
+          eopatch.data['BANDS'][5][..., [3, 2, 1]]
+
+
+      # Draw the RGB images
+        fig, axs = plt.subplots(nrows=5, ncols=5, figsize=(20, 20))
+
+        date = datetime.datetime(2019, 7, 1)
+
+        for i in tqdm(range(len(patch_ids))):
+            eopatch_path = os.path.join(EOPATCH_FOLDER, f"eopatch_{i}")
+            eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+
+            dates = np.array([timestamp.replace(tzinfo=None) for timestamp in eopatch.timestamps])
+            closest_date_id = np.argsort(abs(date - dates))[0]
+
+            ax = axs[i // 5][i % 5]
+            ax.imshow(np.clip(eopatch.data["BANDS"][closest_date_id][..., [2, 1, 0]] * 3.5, 0, 1))
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_aspect("auto")
+            del eopatch
+
+        fig.subplots_adjust(wspace=0, hspace=0)
+
+
+      # Visualize the reference map
+      fig, axs = plt.subplots(nrows=5, ncols=5, figsize=(20, 25))
+
+      for i in tqdm(range(len(patch_ids))):
+          eopatch_path = os.path.join(EOPATCH_FOLDER, f"eopatch_{i}")
+          eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+
+          ax = axs[i // 5][i % 5]
+          im = ax.imshow(eopatch.mask_timeless["LULC"].squeeze(), cmap=lulc_cmap, norm=lulc_norm)
+          ax.set_xticks([])
+          ax.set_yticks([])
+          ax.set_aspect("auto")
+          del eopatch
+
+      fig.subplots_adjust(wspace=0, hspace=0)
+
+      cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
+      cb.ax.tick_params(labelsize=20)
+      cb.set_ticks([entry.id for entry in LULC])
+      cb.ax.set_xticklabels([entry.name for entry in LULC], rotation=45, fontsize=15)
+      plt.show();
+
+    # Plot the map of valid pixel counts
+
+    # Calculate min and max counts of valid data per pixel
+    vmin, vmax = None, None
+    for i in range(len(patch_ids)):
+        eopatch_path = os.path.join(EOPATCH_FOLDER, f"eopatch_{i}")
+        eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+        data = eopatch.mask_timeless["VALID_COUNT"].squeeze()
+        vmin = np.min(data) if vmin is None else (np.min(data) if np.min(data) < vmin else vmin)
+        vmax = np.max(data) if vmax is None else (np.max(data) if np.max(data) > vmax else vmax)
+
+    fig, axs = plt.subplots(nrows=5, ncols=5, figsize=(20, 25))
+
+    for i in tqdm(range(len(patch_ids))):
+        eopatch_path = os.path.join(EOPATCH_FOLDER, f"eopatch_{i}")
+        eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+        ax = axs[i // 5][i % 5]
+        im = ax.imshow(eopatch.mask_timeless["VALID_COUNT"].squeeze(), vmin=vmin, vmax=vmax, cmap=plt.cm.inferno)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.set_aspect("auto")
+        del eopatch
+
+    fig.subplots_adjust(wspace=0, hspace=0)
+
+    cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
+    cb.ax.tick_params(labelsize=20)
+    plt.show()
+
+
+  # Spatial mean of NDVI
+  Plot the mean of NDVI over all pixels in a selected patch throughout the year. Filter out clouds in the mean calculation.
+
+  eopatch = EOPatch.load(os.path.join(EOPATCH_FOLDER, f"eopatch_{i}"), lazy_loading=True)
+
+  ndvi = eopatch.data["NDVI"]
+  mask = eopatch.mask["IS_VALID"]
+  time = np.array(eopatch.timestamps)
+  t, w, h, _ = ndvi.shape
+
+  ndvi_clean = ndvi.copy()
+  ndvi_clean[~mask] = np.nan  # Set values of invalid pixels to NaN's
+
+  # Calculate means, remove NaN's from means
+  ndvi_mean = np.nanmean(ndvi.reshape(t, w * h), axis=1)
+  ndvi_mean_clean = np.nanmean(ndvi_clean.reshape(t, w * h), axis=1)
+  time_clean = time[~np.isnan(ndvi_mean_clean)]
+  ndvi_mean_clean = ndvi_mean_clean[~np.isnan(ndvi_mean_clean)]
+
+  fig = plt.figure(figsize=(20, 5))
+  plt.plot(time_clean, ndvi_mean_clean, "s-", label="Mean NDVI with cloud cleaning")
+  plt.plot(time, ndvi_mean, "o-", label="Mean NDVI without cloud cleaning")
+  plt.xlabel("Time", fontsize=15)
+  plt.ylabel("Mean NDVI over patch", fontsize=15)
+  plt.xticks(fontsize=15)
+  plt.yticks(fontsize=15)
+
+  plt.legend(loc=2, prop={"size": 15});
+
+# Temporal mean of NDVI
+Plot the time-wise mean of NDVI for the whole region. Filter out clouds in the mean calculation.
+
+fig, axs = plt.subplots(nrows=5, ncols=5, figsize=(20, 25))
+
+for i in tqdm(range(len(patch_ids))):
+    eopatch_path = os.path.join(EOPATCH_FOLDER, f"eopatch_{i}")
+    eopatch = EOPatch.load(eopatch_path, lazy_loading=True)
+    ndvi = eopatch.data["NDVI"]
+    mask = eopatch.mask["IS_VALID"]
+    ndvi[~mask] = np.nan
+    ndvi_mean = np.nanmean(ndvi, axis=0).squeeze()
+
+    ax = axs[i // 5][i % 5]
+    im = ax.imshow(ndvi_mean, vmin=0, vmax=0.8, cmap=plt.get_cmap("YlGn"))
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_aspect("auto")
+    del eopatch
+
+fig.subplots_adjust(wspace=0, hspace=0)
+
+cb = fig.colorbar(im, ax=axs.ravel().tolist(), orientation="horizontal", pad=0.01, aspect=100)
+cb.ax.tick_params(labelsize=20)
+plt.show()
+#+end_src
+
+** data clean
+*** filtering
+
+#+begin_src python
+  # LOAD EXISTING EOPATCHES
+  load = LoadTask(EOPATCH_FOLDER)
+
+  # FEATURE CONCATENATION
+  concatenate = MergeFeatureTask({FeatureType.DATA: ["BANDS", "NDVI", "NDWI", "NDBI"]}, (FeatureType.DATA, "FEATURES"))
+
+  # FILTER OUT CLOUDY SCENES
+
+  class ValidDataFractionPredicate:
+       """Predicate that defines if a frame from EOPatch's time-series is valid or not. Frame is valid if the
+      valid data fraction is above the specified threshold.
+      """
+
+      def __init__(self, threshold):
+          self.threshold = threshold
+
+      def __call__(self, array):
+          coverage = np.sum(array.astype(np.uint8)) / np.prod(array.shape)
+          return coverage > self.threshold
+
+  # Keep frames with > 80% valid coverage
+  valid_data_predicate = ValidDataFractionPredicate(0.8)
+  filter_task = SimpleFilterTask((FeatureType.MASK, "IS_VALID"), valid_data_predicate)
+#+end_src
+
+*** temporal gap filling
+
+#+begin_src python
+  # LINEAR TEMPORAL INTERPOLATION
+  # linear interpolation of full time-series and date resampling
+  resampled_range = ("2019-01-01", "2019-12-31", 15)
+  linear_interp = LinearInterpolationTask(
+      (FeatureType.DATA, "FEATURES"),  # name of field to interpolate
+      mask_feature=(FeatureType.MASK, "IS_VALID"),  # mask to be used in interpolation
+      copy_features=[(FeatureType.MASK_TIMELESS, "LULC")],  # features to keep
+      resample_range=resampled_range,
+  )
+#+end_src
+
+*** noise erosion
+
+#+begin_src python
+  # EROSION
+  # erode each class of the reference map
+  erosion = ErosionTask(mask_feature=(FeatureType.MASK_TIMELESS, "LULC", "LULC_ERODED"), disk_radius=1)
+#+end_src
+
+*** spatial sampling
+
+#+begin_src python
+  # SPATIAL SAMPLING
+  # Uniformly sample pixels from patches
+  lulc_type_ids = [lulc_type.id for lulc_type in LULC]
+
+  spatial_sampling = FractionSamplingTask(
+      features_to_sample=[(FeatureType.DATA, "FEATURES", "FEATURES_SAMPLED"), (FeatureType.MASK_TIMELESS, "LULC_ERODED")],
+      sampling_feature=(FeatureType.MASK_TIMELESS, "LULC_ERODED"),
+      fraction=0.25,  # a quarter of points
+      exclude_values=[0],
+  )
+#+end_src
+
+*** run workflow
+
+#+begin_src python
+  save = SaveTask(EOPATCH_SAMPLES_FOLDER, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)
+  # Define the workflow
+  workflow_nodes = linearly_connect_tasks(load, concatenate, filter_task, linear_interp, erosion, spatial_sampling, save)
+  workflow = EOWorkflow(workflow_nodes)
+  Run the EOWorkflow over all EOPatches
+  %%time
+
+  execution_args = []
+  for idx in range(len(patch_ids)):
+      execution_args.append(
+          {
+              workflow_nodes[0]: {"eopatch_folder": f"eopatch_{idx}"},  # load
+              workflow_nodes[-2]: {"seed": 42},  # sampling
+              workflow_nodes[-1]: {"eopatch_folder": f"eopatch_{idx}"},  # save
+          }
+      )
+
+  executor = EOExecutor(workflow, execution_args, save_logs=True)
+  executor.run(workers=5)
+
+  executor.make_report()
+
+  failed_ids = executor.get_failed_executions()
+  if failed_ids:
+      raise RuntimeError(
+          f"Execution failed EOPatches with IDs:\n{failed_ids}\n"
+          f"For more info check report at {executor.get_report_path()}"
+      )
+#+end_src
+
+** construct and train model
+*** train test split
+
+#+begin_src python
+   Load sampled eopatches
+sampled_eopatches = []
+
+for i in range(len(patch_ids)):
+    sample_path = os.path.join(EOPATCH_SAMPLES_FOLDER, f"eopatch_{i}")
+    sampled_eopatches.append(EOPatch.load(sample_path, lazy_loading=True))
+# Definition of the train and test patch IDs, take 80 % for train
+test_ids = [0, 8, 16, 19, 20]
+test_eopatches = [sampled_eopatches[i] for i in test_ids]
+train_ids = [i for i in range(len(patch_ids)) if i not in test_ids]
+train_eopatches = [sampled_eopatches[i] for i in train_ids]
+
+# Set the features and the labels for train and test sets
+features_train = np.concatenate([eopatch.data["FEATURES_SAMPLED"] for eopatch in train_eopatches], axis=1)
+labels_train = np.concatenate([eopatch.mask_timeless["LULC_ERODED"] for eopatch in train_eopatches], axis=0)
+
+features_test = np.concatenate([eopatch.data["FEATURES_SAMPLED"] for eopatch in test_eopatches], axis=1)
+labels_test = np.concatenate([eopatch.mask_timeless["LULC_ERODED"] for eopatch in test_eopatches], axis=0)
+
+# Get shape
+t, w1, h, f = features_train.shape
+t, w2, h, f = features_test.shape
+
+# Reshape to n x m
+features_train = np.moveaxis(features_train, 0, 2).reshape(w1 * h, t * f)
+labels_train = labels_train.reshape(w1 * h)
+features_test = np.moveaxis(features_test, 0, 2).reshape(w2 * h, t * f)
+labels_test = labels_test.reshape(w2 * h)
+features_train.shape
+#+end_src
+
+*** Train
+
+#+begin_src python
+    # Set up training classes
+  labels_unique = np.unique(labels_train)
+
+  # Set up the model
+  model = lgb.LGBMClassifier(
+      objective="multiclass", num_class=len(labels_unique), metric="multi_logloss", random_state=42
+  )
+
+  # Train the model
+  model.fit(features_train, labels_train)
+
+  # Save the model
+  joblib.dump(model, os.path.join(RESULTS_FOLDER, "model_SI_LULC.pkl"))
+#+end_src
+
+** validate model
+
+#+begin_src python
+#+end_src
+
+** Visualizations
+
+#+begin_src python
+#+end_src
+
 * Model ByT5 in pytorch
 ** Data Loader
 
