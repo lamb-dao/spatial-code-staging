@@ -2,159 +2,10 @@
 ** Spatial Operations
 
 Make common QGIS map ops reproducible by directly calling gdal via interop
-#+begin_src lisp
-      (defun layers-from-paths ()
-        "finds tiffs in copied dir"
-
-        ;; go to disk region of copied data
-        (cd "/")
-                                              ; match the path
-                                              ; &&&test is 1 item before firsting
-                                              ; get car
-                                              ; make #P<> a string
-                                              ; go there and report
-        (cd (path (first (directory "bulk-1/**/*COPY"))))
-        (format t "Collecting layers from: ~A~%" (pwd))
-                                              ; return string representation of files
-        (set-difference
-         (mapcar #'path (finder (path~ "index") (path~ "indices") (extension= "tif")))
-         (mapcar #'path (finder (path~ "tiles")))
-         :test #'equal))
-
-      (defun layer-name-from-path (path)
-        "extracts the tiff color layer name from a pix4d path"
-                                              ; keep after /indices/
-                                              ; keep before first /
-        (first (split "/" (second (split "/indices/" path)))))
-
-      (defun layer-date-from-path (path)
-        "&&& extracts the tiff date from our pix4d paths"
-                                              ; keep after &&&
-                                              ; keep before first &&&
-        (first (split "&&&" (second (split "&&&" path)))))
-
-      (defun gather-for-gdal ()
-        "&&&"
-        (let* ((west-files (layers-from-paths))
-               (indices (mapcar #'layer-name-from-path west-files))
-               (indices-s (sort (copy-list indices) #'string<))
-               (expected-i '("red_edge" "red" "nir" "ndvi" "green" "blue" "Sentera_NDRE"))
-               (expected-is (sort (copy-list expected-i) #'string<))
-               (expected-n (length expected-i)))
-                                              ; test length
-          (assert (= expected-n
-                     (length west-files))
-                  () "Unexpected n items, recieved: ~D" (length west-files))
-                                              ; test contents
-          (assert (equal expected-is
-                         indices-s)
-                  () "Indices do not match expected values
-                    Expected:~%~S
-                    Recieved:~%~S" expected-is indices-s)
-          (dolist (f west-files)
-            (print f))
-          (dolist (i indices)
-            (print i))
-          (y-or-n-p "With these files; Continue?")
-          (values west-files indices)
-          ))
-
-      (defparameter west-files (gather-for-gdal))
-
-      (defun gdalinfo (datasetname)
-        "usage: gdalinfo [--help-general] [-json] [-mm] [-stats | -approx_stats] [-hist] [-nogcp] [-nomd]
-                      [-norat] [-noct] [-nofl] [-checksum] [-proj4]
-                      [-listmdd] [-mdd domain|`all`] [-wkt_format wkt1|wkt2|...]*
-                      [-sd subdataset] [-oo name=value]* [-if format]* datasetname"
-
-        ($cmd (format nil "gdalinfo ~a" datasetname )))
-      (gdalinfo (first west-files))
-
-      (defun gdal-edit (color datasetname)
-        "Usage: gdal_edit [--help-general] [-ro] [-a_srs srs_def]
-                       [-a_ullr ulx uly lrx lry] [-a_ulurll ulx uly urx ury llx lly]
-                       [-tr xres yres] [-unsetgt] [-unsetrpc] [-a_nodata value] [-unsetnodata]
-                       [-offset value] [-scale value] [-units value]
-                       [-colorinterp_X red|green|blue|alpha|grayundefined]*
-                       [-unsetstats] [-stats] [-approx_stats]
-                       [-setstats min max mean stddev]
-                       [-gcp pixel line easting northing [elevation]]*
-                       [-unsetmd] [-oo NAME=VALUE]* [-mo META-TAG=VALUE]*  datasetname"
-
-
-        ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" color datasetname)))
-
-      (call-gdal-edit (first west-files))
-
-      ($cmd (format nil "gdal_edit.py -colorinterp_1 ~A ~A" "asdfasdfh" (first west-files)))
-      (call-gdalinfo (first west-files))
-
-      (defun gdalwarp-&&& (srcfile dstfile)
-        " Usage: gdalwarp [--help-general] [--formats]
-          [-s_srs srs_def] [-t_srs srs_def] [-to NAME=VALUE]* [-vshift  -novshift]
-          [[-s_coord_epoch epoch] | [-t_coord_epoch epoch]]
-          [-order n | -tps | -rpc | -geoloc] [-et err_threshold]
-          [-refine_gcps tolerance [minimum_gcps]]
-          [-te xmin ymin xmax ymax] [-tr xres yres] [-tap] [-ts width height]
-          [-ovr level|AUTO|AUTO-n|NONE] [-wo NAME=VALUE] [-ot Byte/Int16/...] [-wt Byte/Int16]
-          [-srcnodata value [value...]] [-dstnodata value [value...]] -dstalpha
-          [-r resampling_method] [-wm memory_in_mb] [-multi] [-q]
-          [-cutline datasource] [-cl layer] [-cwhere expression]
-          [-csql statement] [-cblend dist_in_pixels] [-crop_to_cutline]
-          [-if format]* [-of format] [-co NAME=VALUE]* [-overwrite]
-          [-nomd] [-cvmd meta_conflict_value] [-setci] [-oo NAME=VALUE]*
-          [-doo NAME=VALUE]*
-          srcfile* dstfile
-
-          Available resampling methods:
-              near (default), bilinear, cubic, cubicspline, lanczos, average, rms,
-              mode,  max, min, med, Q1, Q3, sum. "
-        ($cmd (format nil "gdalwarp  ~A ~A" srcfile dstfile)))
-      (gdalwarp-&&& (first west-files) "test.tif")
-
-      (defun gdal_merge (outfile raster1 raster2)
-      " Usage: gdal_merge.py [-o out_filename] [-of out_format] [-co NAME=VALUE]*
-                           [-ps pixelsize_x pixelsize_y] [-tap] [-separate] [-q] [-v] [-pct]
-                           [-ul_lr ulx uly lrx lry] [-init \"value [value...]\"]
-                           [-n nodata_value] [-a_nodata output_nodata_value]
-                           [-ot datatype] [-createonly] input_files
-                           [--help-general]
-      gdal_merge.py -o merged.tif -of GTiff input1.tif input2.tif")
-
-    #layernames in a gpkg
-    ogrinfo ~/qgis/AOI-buffered.gpkg
-
-  #fill nodata
-  gdal_fillnodata.py 2023-07-04_bgr.tif OUTPUT.tif -md 100 -si 11 -of GTiff
-
-  usage: gdal_fillnodata.py [-h] [-q] [-md max_distance] [-si smoothing_iterations] [-o [name=value ...]] [-mask filename] [-b band] [-of gdal_format] [-co [name=value ...]] src_filename dst_filename
-
-  Fill raster regions by interpolation from edges
-  -------------------------------------------------
-  It Fills selection regions (usually nodata areas)
-  by interpolating from valid pixels around the edges of the area.
-  Additional details on the algorithm are available in the GDALFillNodata() docs.
-
-  positional arguments:
-    src_filename          The source raster file used to identify target pixels. Only one band is used.
-    dst_filename          The new file to create with the interpolated result. If not provided, the source band is updated in place.
-
-  options:
-    -h, --help            show this help message and exit
-    -q, -quiet            The script runs in quiet mode. The progress monitor is suppressed and routine messages are not displayed.
-    -md max_distance      The maximum distance (in pixels) that the algorithm will search out for values to interpolate. The default is 100 pixels.
-    -si smoothing_iterations
-                          The number of 3x3 average filter smoothing iterations to run after the interpolation to dampen artifacts. The default is zero smoothing iterations.
-    -o [name=value ...]   Specify a special argument to the algorithm.
-    -mask filename        Use the first band of the specified file as a validity mask (zero is invalid, non-zero is valid).
-    -b band, -band band   The band to operate on, defaults to 1.
-    -of gdal_format       Select the output format. Use the short format name.
-    -co [name=value ...]  Creation options for the destination dataset.
-#+end_src
 
 gaussian blur not specific to spatial software ensuring spatial metadata preservation
 #+begin_src bash
-  #apply sequentially for gaussian pyramid
+ apply sequentially for gaussian pyramid
   convert input.tif -gaussian-blur 0x2 output.tif #0 specifies auto radius for 2 sigma
   ffmpeg -i input.tif -filter:v "gblur=sigma=2" output.tif
 
@@ -175,6 +26,7 @@ gaussian blur not specific to spatial software ensuring spatial metadata preserv
         [-unsetmd] [-oo <NAME>=<VALUE>]... [-mo <META-TAG>=<VALUE>]...
         <datasetname>
 #+end_src
+
 ** Export to geopackage database
 ogr2ogr to incrementally add geopackage layers
 https://gdal.org/en/stable/programs/ogr2ogr.html
@@ -201,6 +53,11 @@ https://gdal.org/user/ogr_sql_dialect.html#joins
       LEFT JOIN 'joincsv.csv'.joincsv \
       ON inshape.GISJOIN = joincsv.GISJOIN" \
           shape_join.shp inshape.shp
+#+end_src
+
+#+begin_src lisp
+  #layernames in a gpkg
+  ogrinfo ~/qgis/AOI-buffered.gpkg
 #+end_src
 
 ** Data Aggregator
