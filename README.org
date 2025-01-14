@@ -1,30 +1,90 @@
 * Spatial data preparation
 ** Spatial Operations
-
 Make common QGIS map ops reproducible by directly calling gdal via interop
 
-gaussian blur not specific to spatial software ensuring spatial metadata preservation
+normalize with open world method
+#+begin_src python
+      import numpy as np
+
+            def normalize_dynamic_world(data):
+                """
+                Normalize data using the Dynamic World paper's method:
+                1. Log transform to handle long-tailed values
+                2. Calculate 30th and 70th percentiles of log-transformed data
+                3. Remap these percentiles to points on sigmoid curve
+
+                Args:
+                    data: numpy array of input values
+                    nodata_value: value to be masked/ignored in calculations
+
+                Returns:
+                    numpy array of normalized values in range [0,1]
+                """
+
+                # Log transform
+                # epsilon to handle zeros
+                log_data = np.log10(data + 1e-10)
+
+                # Calculate percentiles of log-transformed data
+                p30 = np.percentile(log_data, 30)
+                p70 = np.percentile(log_data, 70)
+
+                # Map [p30, p70] to approximately [-2, 2]
+                # shift midpoint to 0, scale range to 1, expand to range
+                transformed = 4 * (log_data  - (p70 + p30) / 2) / (p70 - p30)
+                # apply sigmoid normalization s.t. OP is (0, 1) and extremes are compressed
+                normalized = 1 / (1 + np.exp(-transformed)
+
+        return normalized
+
+    # Example usage with rasterio:
+    import rasterio
+
+    def normalize_raster(input_path, output_path):
+        """
+        Normalize a raster file using the Dynamic World normalization method.
+        Single band rasters and no nodata areas
+
+        Args:
+            input_path: path to input raster file
+            output_path: path where normalized raster will be saved
+        """
+        with rasterio.open(input_path) as src:
+            # Read
+            data = src.read(1)
+            # Normalize
+            normalized = normalize_dynamic_world(data)
+
+            # Prepare the output profile (metadata)
+            profile = src.profile.copy()
+            profile.update(dtype='float32')  # Update datatype for normalized values
+
+            # Write the normalized data
+            with rasterio.open(output_path, 'w', **profile) as dst:
+                dst.write(normalized.astype('float32'), 1)
+
+    # Example usage:
+    if __name__ == "__main__":
+        # For a single numpy array:
+        sample_data = np.array([[100, 200, 300],
+                               [400, 500, 600],
+                               [700, 800, 900]])
+        normalized_data = normalize_dynamic_world(sample_data)
+
+        # For a raster file:
+        # normalize_raster('input.tif', 'normalized.tif')
+#+end_src
+
+implement in with py4cl2
+#+begin_src lisp
+  ;normalize
+  ;; py4cl2, numpy, rasterio
+
+#+end_src
+
+scale space gaussian pyramid
 #+begin_src bash
- apply sequentially for gaussian pyramid
-  convert input.tif -gaussian-blur 0x2 output.tif #0 specifies auto radius for 2 sigma
-  ffmpeg -i input.tif -filter:v "gblur=sigma=2" output.tif
-
-  #Before and after metadata comparison must be zero diff
-  gdalinfo input.geotif
-  gdalinfo output.geotif
-
-  #else transfer metadata
-  gdal_edit [--help] [--help-general] [-ro] [-a_srs <srs_def>]
-        [-a_ullr <ulx> <uly> <lrx> <lry>] [-a_ulurll <ulx> <uly> <urx> <ury> <llx> <lly>]
-        [-tr <xres> <yres>] [-unsetgt] [-unsetrpc] [-a_nodata <value>] [-unsetnodata]
-        [-a_coord_epoch <epoch>] [-unsetepoch]
-        [-unsetstats] [-stats] [-approx_stats]
-        [-setstats <min> <max> <mean> <stddev>]
-        [-scale <value>] [-offset <value>] [-units <value>]
-        [-colorinterp_<X> {red|green|blue|alpha|gray|undefined|pan|coastal|rededge|nir|swir|mwir|lwir|...}]...
-        [-gcp <pixel> <line> <easting> <northing> [<elevation>]]...
-        [-unsetmd] [-oo <NAME>=<VALUE>]... [-mo <META-TAG>=<VALUE>]...
-        <datasetname>
+  otbcli_MultiResolutionPyramid -in input.tif -out pyramid.tif -level 4
 #+end_src
 
 ** Export to geopackage database
@@ -58,6 +118,7 @@ https://gdal.org/user/ogr_sql_dialect.html#joins
 #+begin_src lisp
   #layernames in a gpkg
   ogrinfo ~/qgis/AOI-buffered.gpkg
+
 #+end_src
 
 ** Data Aggregator
