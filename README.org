@@ -1,184 +1,3 @@
-* Spatial data preparation
-
-** Export to geopackage database
-
-targeting gpkg spatial database formatting with tabular data
-https://gdal.org/user/ogr_sql_dialect.html#joins
-#+begin_src bash
-  # Add polygon shapefile
-  # &&& to single shape gpkg ip
-  # at this point multiple polygons are flattened
-  ogr2ogr -f GPKG -update output.gpkg input_polygons.shp -nln extents
-
-  # join csv to shapefile
-  ogr2ogr -sql "SELECT inshape.*, joincsv.* \
-      FROM inshape \
-      LEFT JOIN 'joincsv.csv'.joincsv \
-      ON inshape.GISJOIN = joincsv.GISJOIN" \
-          shape_join.shp inshape.shp
-#+end_src
-
-ogr2ogr to incrementally add geopackage layers
-https://gdal.org/en/stable/programs/ogr2ogr.html
-#+begin_src bash
-  # car init raster
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG output.gpkg first_raster.tif -nln raster-1
-
-  # mapcar cadr append raster
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg second_raster.tif -nln raster-2
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg third_raster.tif -nln raster-3
-#+end_src
-#+begin_src lisp
-  #layernames in a gpkg
-  ogrinfo ~/qgis/AOI-buffered.gpkg
-
-#+end_src
-
-** Data Aggregator
-sql queries over gpkg
-map pixels into data unformatted dat at every location withing selected polygon
-
-requires spatialite extension
-mito syntax
-
-#+begin_src python
-  import sqlite3
-  import rasterio
-
-  def connect_spatialite(db_path):
-      """Connect to SpatiaLite database"""
-      conn = sqlite3.connect(db_path)
-      conn.enable_load_extension(True)
-      conn.load_extension('mod_spatialite')
-      return conn
-
-  def get_polygon_by_id(conn, table_name, polygon_id):
-      """Retrieve a specific polygon by its ID"""
-      cursor = conn.cursor()
-      cursor.execute(f"""
-          SELECT id, ST_AsText(geometry) as geom
-          FROM {table_name}
-          WHERE id = ?
-      """, (polygon_id,))
-      return cursor.fetchone()
-
-  def get_pixels_in_polygon(conn, raster_grid_table, polygon_geom):
-      """Get pixel locations within a given polygon"""
-      cursor = conn.cursor()
-      cursor.execute(f"""
-          SELECT
-              ST_X(ST_Centroid(geometry)) as x,
-              ST_Y(ST_Centroid(geometry)) as y
-          FROM {raster_grid_table}
-          WHERE ST_Intersects(geometry, ST_GeomFromText(?))
-      """, (polygon_geom,))
-      return cursor.fetchall()
-
-  def extract_raster_values_at_point(conn, rasters_table, x, y, srid=4326):
-      """Extract pixel values from all rasters at a specific point"""
-      cursor = conn.cursor()
-      cursor.execute(f"""
-          SELECT
-              raster_name,
-              ST_Value(raster, ST_GeomFromText('POINT(? ?)', ?)) as pixel_value
-          FROM {rasters_table}
-      """, (x, y, srid))
-      return cursor.fetchall()
-
-  def main(db_path):
-      conn = connect_spatialite(db_path)
-
-      try:
-          # Get a specific polygon
-          polygon = get_polygon_by_id(conn, 'my_polygons', 1)
-          print("Polygon:", polygon)
-
-          # Get pixels within that polygon
-          pixels = get_pixels_in_polygon(conn, 'raster_grid', polygon[1])
-          print("Pixels in Polygon:", pixels)
-
-          # If we have a specific pixel location
-          if pixels:
-              x, y = pixels[0]
-              raster_values = extract_raster_values_at_point(conn, 'rasters', x, y)
-              print("Raster Values:", raster_values)
-
-      finally:
-          conn.close()
-
-  if __name__ == '__main__':
-      main('/path/to/spatialite.db') #compatible with gpkg
-#+end_src
-
-Alist data format using :keywords
-#+begin_src lisp
-;; Creating nested alists for sequence data points with results
-(let ((sequences
-      `((:sequence-1 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
-                                      (:x . 1.2)
-                                      (:y . 3.4)
-                                      (:z . 0.5)
-                                      (:results . ((:value1 . 42.3)
-                                                 (:value2 . 18.7)
-                                                 (:value3 . 33.1)))))
-                       (:datapoint . ((:time . "2024-01-01T10:00:01")
-                                      (:x . 1.3)
-                                      (:y . 3.5)
-                                      (:z . 0.6)
-                                      (:results . ((:value1 . 43.1)
-                                                 (:value2 . 19.2)
-                                                 (:value3 . 34.0)))))))
-        (:sequence-2 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
-                                      (:x . 2.1)
-                                      (:y . 4.2)
-                                      (:z . 1.1)
-                                      (:results . ((:value1 . 55.4)
-                                                 (:value2 . 22.3)
-                                                 (:value3 . 44.7)))))))))
-
- ;; Access specific values
- (let* ((seq1 (cdr (assoc :sequence-1 sequences)))
-        (first-point (cdr (assoc :datapoint seq1)))
-        (results (cdr (assoc :results first-point))))
-   (cdr (assoc :value1 results)))  ; => 42.3
-
- ;; Function to extract all x values from a sequence
- (defun get-x-values (sequence-data)
-   (mapcar #'(lambda (point)
-               (cdr (assoc :x (cdr point))))
-           (remove-if-not #'(lambda (pair)
-                             (eq (car pair) :datapoint))
-                         sequence-data)))
-
- ;; Get x values from sequence-1
- (get-x-values (cdr (assoc :sequence-1 sequences)))  ; => (1.2 1.3)
-
- ;; Function to get all value1 results from a sequence
- (defun get-value1-series (sequence-data)
-   (mapcar #'(lambda (point)
-               (let ((results (cdr (assoc :results (cdr point)))))
-                 (cdr (assoc :value1 results))))
-           (remove-if-not #'(lambda (pair)
-                             (eq (car pair) :datapoint))
-                         sequence-data)))
-
- ;; Calculate average of value1 for sequence-1
- (let ((values (get-value1-series (cdr (assoc :sequence-1 sequences)))))
-   (/ (reduce #'+ values) (length values)))  ; => 42.7
-
- ;; Function to get all datapoints at a specific time
- (defun get-points-at-time (sequences time)
-   (loop for (seq-name . seq-data) in sequences
-         collect (cons seq-name
-                      (find-if #'(lambda (point)
-                                  (string= (cdr (assoc :time (cdr point))) time))
-                              seq-data
-                              :key #'car)))))
-
-(get-points-at-time sequences "2024-01-01T10:00:00")
-
-#+end_src
-
 * eo-learn
 ** setup
 
@@ -766,8 +585,328 @@ features_train.shape
 #+begin_src python
 #+end_src
 
-* Model ByT5 in pytorch
-** Data Loader
+* Frameworks
+** eo learn
+
+- https://eo-learn.readthedocs.io/en/latest/
+- https://github.com/sentinel-hub/eo-learn
+- https://github.com/sentinel-hub/eo-learn-examples/tree/main
+- https://github.com/sentinel-hub/eo-learn/tree/master/examples
+
+** tsai
+
+- https://timeseriesai.github.io/tsai/
+- https://github.com/timeseriesAI/tsai
+
+** fastai
+
+- https://docs.fast.ai/
+- https://github.com/fastai/fastai
+
+** sklearn
+
+- https://scikit-learn.org/stable/
+
+** pytorch
+
+- https://pytorch.org/
+- https://github.com/pytorch/pytorch
+- https://pytorch.org/docs/stable/index.html
+
+- dataloader and forward method
+  - Datapipes
+  - https://www.learnpytorch.io/00_pytorch_fundamentals/
+  - https://github.com/mrdbourke/pytorch-deep-learning/
+
+* Resources
+
+comprehensive VAE with tensorboard
+https://hunterheidenreich.com/posts/modern-variational-autoencoder-in-pytorch/
+
+detailed implement then sample/visualize a t model
+https://towardsdatascience.com/a-complete-guide-to-write-your-own-transformers-29e23f371ddd
+
+implemented collection of vae in pytorch
+https://github.com/AntixK/PyTorch-VAE
+
+concepts from autoencoder to BVAE
+https://lilianweng.github.io/posts/2018-08-12-vae/
+
+n dim serial
+https://github.com/jonzia/Recurrent_Autoencoder
+
+https://github.com/RobRomijnders/AE_ts
+https://github.com/RobRomijnders/ts_clust/tree/master/ts_clust
+
+* Removed
+** Architecture
+*** B-VAE
+
+- Theory https://lilianweng.github.io/posts/2018-08-12-vae/
+- Disentangelment experiments https://wandb.ai/arpastrana/beta_vae/reports/Disentangling-Variational-Autoencoders--VmlldzozNDQ3MDk
+- 2 stage training for disentanglement https://arxiv.org/abs/2209.14783
+- Implemented with solver https://github.com/AxelNathanson/pytorch-Variational-Autoencoder
+- Sne vae clustering https://github.com/jgraving/selfsne
+- Vae from scratch https://m.youtube.com/watch?v=VELQT1-hILo
+
+*** byT5
+
+- Architecture video https://m.youtube.com/watch?v=bCz4OMemCcA
+- [ACTOR transformer vae](https://github.com/Mathux/ACTOR)
+- hackable Gpt trainer https://github.com/karpathy/nanoGPT
+- Train/finetune gpt1 https://github.com/akshat0123/GPT-1
+
+** Data loader
+
+- overview
+  - include dates in lispy text based ip:op string, minimal character inclusion
+    eg (ip (date (red (gaussian stack)) (green (gaussian stack)) (blue (gaussian stack) )) op ((dia) (weight) (resistance) (normed-weight)))
+- byT5 data prep
+  - T5 architecture with B-VAE inserted
+    - T5 trainer scripts and utilities
+
+- Write dataloader
+	- Tools
+    - ruricolist/random-sample
+    - mito to SQlite
+    - py4cl cmd
+    - lparallel
+    - mgl dataloader
+    - memoization (modify to add to mito)
+	- less likely Tools
+		- Dask
+		- Geopandas
+		- Daskgeopandas
+		- xarray
+
+	- Input file structure
+    - control dir
+      - AOI extent
+      - Train test extent
+      - validation extent
+      - Id num masks
+      - replicate table
+    - maps dir
+      - EOLearn structure
+      - Maps by sample date
+    - predictions dir
+      - Id key info
+
+	- Out
+		- Combined data vector normed
+		- A observations
+		- B prompt
+		- C loss target
+	- Targets
+		- Clever meerkat, data panels
+
+Prediction Target
+	Swapable output training target, from field data, keyed to id num
+	Validation automation
+		Replicates and folds
+		Map -> arc -> autoencoder -> prediction vs ground truth
+
+- plist data interchange format
+
+data collection
+  ((data-seq . (<>))(predictions . (<>)))
+    (data-seq . ((data-pt . (<>))...(data-pt . (<>))))
+      (data-pt . ((loc . (<>))(blue . (<>))(green . (<>))(red . (<>))(nir . (<>))(ir . (<>))(ndri . (<>))(ndvi . (<>))))
+        (loc . ((x . <LAT>)(y . <LON>)(t . <YYYY-MM-DD>)))
+        (blue . ((3mm . <VAL>)(1cm . <VAL>)(5cm . <VAL>)(50cm . <VAL>)))
+    (predictions . ((height-cm . <VAL>)...(dia-mm . <VAL>)))
+
+prompt:
+  ((data-seq . (<SPAN-CORRUPTED-SEQ>))(task . <PREDICTIONS-MEMBER>)
+    span corrupt with <!>
+  seq to seq pretraining
+  seq to value prediction
+
+target:
+  (predictions-member. result)
+
+Finally to text document such that pytorch data loader is satisfied
+
+** Data Aggregator
+sql queries over gpkg
+map pixels into data unformatted dat at every location withing selected polygon
+
+requires spatialite extension
+mito syntax
+
+#+begin_src python
+  import sqlite3
+  import rasterio
+
+  def connect_spatialite(db_path):
+      """Connect to SpatiaLite database"""
+      conn = sqlite3.connect(db_path)
+      conn.enable_load_extension(True)
+      conn.load_extension('mod_spatialite')
+      return conn
+
+  def get_polygon_by_id(conn, table_name, polygon_id):
+      """Retrieve a specific polygon by its ID"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT id, ST_AsText(geometry) as geom
+          FROM {table_name}
+          WHERE id = ?
+      """, (polygon_id,))
+      return cursor.fetchone()
+
+  def get_pixels_in_polygon(conn, raster_grid_table, polygon_geom):
+      """Get pixel locations within a given polygon"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT
+              ST_X(ST_Centroid(geometry)) as x,
+              ST_Y(ST_Centroid(geometry)) as y
+          FROM {raster_grid_table}
+          WHERE ST_Intersects(geometry, ST_GeomFromText(?))
+      """, (polygon_geom,))
+      return cursor.fetchall()
+
+  def extract_raster_values_at_point(conn, rasters_table, x, y, srid=4326):
+      """Extract pixel values from all rasters at a specific point"""
+      cursor = conn.cursor()
+      cursor.execute(f"""
+          SELECT
+              raster_name,
+              ST_Value(raster, ST_GeomFromText('POINT(? ?)', ?)) as pixel_value
+          FROM {rasters_table}
+      """, (x, y, srid))
+      return cursor.fetchall()
+
+  def main(db_path):
+      conn = connect_spatialite(db_path)
+
+      try:
+          # Get a specific polygon
+          polygon = get_polygon_by_id(conn, 'my_polygons', 1)
+          print("Polygon:", polygon)
+
+          # Get pixels within that polygon
+          pixels = get_pixels_in_polygon(conn, 'raster_grid', polygon[1])
+          print("Pixels in Polygon:", pixels)
+
+          # If we have a specific pixel location
+          if pixels:
+              x, y = pixels[0]
+              raster_values = extract_raster_values_at_point(conn, 'rasters', x, y)
+              print("Raster Values:", raster_values)
+
+      finally:
+          conn.close()
+
+  if __name__ == '__main__':
+      main('/path/to/spatialite.db') #compatible with gpkg
+#+end_src
+
+Alist data format using :keywords
+#+begin_src lisp
+;; Creating nested alists for sequence data points with results
+(let ((sequences
+      `((:sequence-1 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
+                                      (:x . 1.2)
+                                      (:y . 3.4)
+                                      (:z . 0.5)
+                                      (:results . ((:value1 . 42.3)
+                                                 (:value2 . 18.7)
+                                                 (:value3 . 33.1)))))
+                       (:datapoint . ((:time . "2024-01-01T10:00:01")
+                                      (:x . 1.3)
+                                      (:y . 3.5)
+                                      (:z . 0.6)
+                                      (:results . ((:value1 . 43.1)
+                                                 (:value2 . 19.2)
+                                                 (:value3 . 34.0)))))))
+        (:sequence-2 . ((:datapoint . ((:time . "2024-01-01T10:00:00")
+                                      (:x . 2.1)
+                                      (:y . 4.2)
+                                      (:z . 1.1)
+                                      (:results . ((:value1 . 55.4)
+                                                 (:value2 . 22.3)
+                                                 (:value3 . 44.7)))))))))
+
+ ;; Access specific values
+ (let* ((seq1 (cdr (assoc :sequence-1 sequences)))
+        (first-point (cdr (assoc :datapoint seq1)))
+        (results (cdr (assoc :results first-point))))
+   (cdr (assoc :value1 results)))  ; => 42.3
+
+ ;; Function to extract all x values from a sequence
+ (defun get-x-values (sequence-data)
+   (mapcar #'(lambda (point)
+               (cdr (assoc :x (cdr point))))
+           (remove-if-not #'(lambda (pair)
+                             (eq (car pair) :datapoint))
+                         sequence-data)))
+
+ ;; Get x values from sequence-1
+ (get-x-values (cdr (assoc :sequence-1 sequences)))  ; => (1.2 1.3)
+
+ ;; Function to get all value1 results from a sequence
+ (defun get-value1-series (sequence-data)
+   (mapcar #'(lambda (point)
+               (let ((results (cdr (assoc :results (cdr point)))))
+                 (cdr (assoc :value1 results))))
+           (remove-if-not #'(lambda (pair)
+                             (eq (car pair) :datapoint))
+                         sequence-data)))
+
+ ;; Calculate average of value1 for sequence-1
+ (let ((values (get-value1-series (cdr (assoc :sequence-1 sequences)))))
+   (/ (reduce #'+ values) (length values)))  ; => 42.7
+
+ ;; Function to get all datapoints at a specific time
+ (defun get-points-at-time (sequences time)
+   (loop for (seq-name . seq-data) in sequences
+         collect (cons seq-name
+                      (find-if #'(lambda (point)
+                                  (string= (cdr (assoc :time (cdr point))) time))
+                              seq-data
+                              :key #'car)))))
+
+(get-points-at-time sequences "2024-01-01T10:00:00")
+
+#+end_src
+
+** Export to geopackage database
+
+targeting gpkg spatial database formatting with tabular data
+https://gdal.org/user/ogr_sql_dialect.html#joins
+#+begin_src bash
+  # Add polygon shapefile
+  # &&& to single shape gpkg ip
+  # at this point multiple polygons are flattened
+  ogr2ogr -f GPKG -update output.gpkg input_polygons.shp -nln extents
+
+  # join csv to shapefile
+  ogr2ogr -sql "SELECT inshape.*, joincsv.* \
+      FROM inshape \
+      LEFT JOIN 'joincsv.csv'.joincsv \
+      ON inshape.GISJOIN = joincsv.GISJOIN" \
+          shape_join.shp inshape.shp
+#+end_src
+
+ogr2ogr to incrementally add geopackage layers
+https://gdal.org/en/stable/programs/ogr2ogr.html
+#+begin_src bash
+  # car init raster
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG output.gpkg first_raster.tif -nln raster-1
+
+  # mapcar cadr append raster
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg second_raster.tif -nln raster-2
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg third_raster.tif -nln raster-3
+#+end_src
+#+begin_src lisp
+  #layernames in a gpkg
+  ogrinfo ~/qgis/AOI-buffered.gpkg
+
+#+end_src
+** Model ByT5 in pytorch
+*** Data Loader
 
 parallel text format in train.txt
 #+begin_src
@@ -815,7 +954,7 @@ class Seq2SeqDataset(Dataset):
         }
 #+end_src
 
-** Span corruption pretraining objective
+*** Span corruption pretraining objective
 calculate spans method and apply to a pretraining text string
 #+begin_src python
   def corrupt_spans(text: str, mean_span_length: int = 20, corruption_rate: float = 0.15):
@@ -1083,7 +1222,7 @@ class SpanCorruptionDataset(Dataset):
   if __name__ == '__main__':
       main()
 #+end_src
-** Pre training Tokenizer
+*** Pre training Tokenizer
 #+begin_src python
   from torch.utils.data import Dataset, DataLoader
   import torch
@@ -1289,8 +1428,8 @@ class SpanCorruptionDataset(Dataset):
           if __name__ == "__main__":
               main()
 #+end_src
-** Architecture
-*** b VAE
+*** Architecture
+**** b VAE
 
 #+begin_src python
 import torch
@@ -1379,7 +1518,7 @@ if __name__ == '__main__':
     main()
 #+end_src
 
-*** byt5
+**** byt5
 #+begin_src python
   import torch
   import torch.nn as nn
@@ -1599,7 +1738,7 @@ def main():
 if __name__ == '__main__':
     main()
 #+end_src
-** Latent Sampling
+*** Latent Sampling
 
 Random Sampling:
 #+begin_src python
@@ -1714,112 +1853,3 @@ Traversing Latent Dimensions
 
         return torch.stack(traversal_samples)
 #+end_src
-
-* Resources
-** links
-comprehensive VAE with tensorboard
-https://hunterheidenreich.com/posts/modern-variational-autoencoder-in-pytorch/
-
-implement then sample/visualize a t model
-https://towardsdatascience.com/a-complete-guide-to-write-your-own-transformers-29e23f371ddd
-
-implemented collection of vae in pytorch
-https://github.com/AntixK/PyTorch-VAE
-
-concepts from autoencoder to BVAE
-https://lilianweng.github.io/posts/2018-08-12-vae/
-
-n dim serial
-https://github.com/jonzia/Recurrent_Autoencoder
-
-https://github.com/RobRomijnders/AE_ts
-https://github.com/RobRomijnders/ts_clust/tree/master/ts_clust
-
-** removed
-*** Architecture
-**** B-VAE
-
-- Theory https://lilianweng.github.io/posts/2018-08-12-vae/
-- Disentangelment experiments https://wandb.ai/arpastrana/beta_vae/reports/Disentangling-Variational-Autoencoders--VmlldzozNDQ3MDk
-- 2 stage training for disentanglement https://arxiv.org/abs/2209.14783
-- Implemented with solver https://github.com/AxelNathanson/pytorch-Variational-Autoencoder
-- Sne vae clustering https://github.com/jgraving/selfsne
-- Vae from scratch https://m.youtube.com/watch?v=VELQT1-hILo
-
-**** byT5
-
-- Architecture video https://m.youtube.com/watch?v=bCz4OMemCcA
-- [ACTOR transformer vae](https://github.com/Mathux/ACTOR)
-- hackable Gpt trainer https://github.com/karpathy/nanoGPT
-- Train/finetune gpt1 https://github.com/akshat0123/GPT-1
-
-*** Data loader
-
-- overview
-  - include dates in lispy text based ip:op string, minimal character inclusion
-    eg (ip (date (red (gaussian stack)) (green (gaussian stack)) (blue (gaussian stack) )) op ((dia) (weight) (resistance) (normed-weight)))
-- byT5 data prep
-  - T5 architecture with B-VAE inserted
-    - T5 trainer scripts and utilities
-
-- Write dataloader
-	- Tools
-    - ruricolist/random-sample
-    - mito to SQlite
-    - py4cl cmd
-    - lparallel
-    - mgl dataloader
-    - memoization (modify to add to mito)
-	- less likely Tools
-		- Dask
-		- Geopandas
-		- Daskgeopandas
-		- xarray
-
-	- Input file structure
-    - control dir
-      - AOI extent
-      - Train test extent
-      - validation extent
-      - Id num masks
-      - replicate table
-    - maps dir
-      - EOLearn structure
-      - Maps by sample date
-    - predictions dir
-      - Id key info
-
-	- Out
-		- Combined data vector normed
-		- A observations
-		- B prompt
-		- C loss target
-	- Targets
-		- Clever meerkat, data panels
-
-Prediction Target
-	Swapable output training target, from field data, keyed to id num
-	Validation automation
-		Replicates and folds
-		Map -> arc -> autoencoder -> prediction vs ground truth
-
-- plist data interchange format
-
-data collection
-  ((data-seq . (<>))(predictions . (<>)))
-    (data-seq . ((data-pt . (<>))...(data-pt . (<>))))
-      (data-pt . ((loc . (<>))(blue . (<>))(green . (<>))(red . (<>))(nir . (<>))(ir . (<>))(ndri . (<>))(ndvi . (<>))))
-        (loc . ((x . <LAT>)(y . <LON>)(t . <YYYY-MM-DD>)))
-        (blue . ((3mm . <VAL>)(1cm . <VAL>)(5cm . <VAL>)(50cm . <VAL>)))
-    (predictions . ((height-cm . <VAL>)...(dia-mm . <VAL>)))
-
-prompt:
-  ((data-seq . (<SPAN-CORRUPTED-SEQ>))(task . <PREDICTIONS-MEMBER>)
-    span corrupt with <!>
-  seq to seq pretraining
-  seq to value prediction
-
-target:
-  (predictions-member. result)
-
-Finally to text document such that pytorch data loader is satisfied
