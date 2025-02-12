@@ -574,16 +574,6 @@ features_train.shape
   joblib.dump(model, os.path.join(RESULTS_FOLDER, "model_SI_LULC.pkl"))
 #+end_src
 
-** validate model
-
-#+begin_src python
-#+end_src
-
-** Visualizations
-
-#+begin_src python
-#+end_src
-
 * Resources
 ** Frameworks
 *** eo learn
@@ -638,7 +628,7 @@ https://github.com/RobRomijnders/AE_ts
 https://github.com/RobRomijnders/ts_clust/tree/master/ts_clust
 
 * Removed
-** Data loader
+** High Bandwidth Data Loader
 
 - overview
   - include dates in lispy text based ip:op string, minimal character inclusion
