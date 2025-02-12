@@ -1,38 +1,25 @@
-* eo-learn
-** setup
+* eolearn calling tsai runtime
+** TODO setup
 
 #+begin_src python
-
-  # Jupyter notebook related
   %reload_ext autoreload
   %autoreload 2
   %matplotlib inline
 
   import datetime
   import itertools
-
-  # Built-in modules
   import os
-
-  # Basics of Python data handling and visualization
   import numpy as np
   from aenum import MultiValueEnum
-
-  np.random.seed(42)
   import geopandas as gpd
   import joblib
-
-  # Machine learning
   import lightgbm as lgb
   import matplotlib.pyplot as plt
   from matplotlib.colors import BoundaryNorm, ListedColormap
   from shapely.geometry import Polygon
   from sklearn import metrics, preprocessing
   from tqdm.auto import tqdm
-
   from sentinelhub import DataCollection, UtmZoneSplitter
-
-  # Imports from eo-learn and sentinelhub-py
   from eolearn.core import (
       EOExecutor,
       EOPatch,
@@ -50,135 +37,147 @@
   from eolearn.geometry import ErosionTask, VectorToRasterTask
   from eolearn.io import ExportToTiffTask, SentinelHubInputTask, VectorImportTask &&& ImportFromTiffTask
   from eolearn.ml_tools import FractionSamplingTask+begin_src python
+
+  np.random.seed(42)
 #+end_src
 
-** data load
-*** parse layers gpkg
-**** define aoi
-
-#+begin_src python
-#+end_src
+** TODO data load
+*** TODO parse input data dir
+**** TODO establish dir structure
 
 #+begin_src python
   # Folder where data for running the notebook is stored
-DATA_FOLDER = os.path.join("..", "..", "example_data")
-# Locations for collected data and intermediate results
-EOPATCH_FOLDER = os.path.join(".", "eopatches")
-EOPATCH_SAMPLES_FOLDER = os.path.join(".", "eopatches_sampled")
-RESULTS_FOLDER = os.path.join(".", "results")
-for folder in (EOPATCH_FOLDER, EOPATCH_SAMPLES_FOLDER, RESULTS_FOLDER):
-    os.makedirs(folder, exist_ok=True)
+  DATA_FOLDER = os.path.join("..", "..", "example_data")
+  # Locations for collected data and intermediate results
+  EOPATCH_FOLDER = os.path.join(".", "eopatches")
+  EOPATCH_SAMPLES_FOLDER = os.path.join(".", "eopatches_sampled")
+  RESULTS_FOLDER = os.path.join(".", "results")
+  for folder in (EOPATCH_FOLDER, EOPATCH_SAMPLES_FOLDER, RESULTS_FOLDER):
+      os.makedirs(folder, exist_ok=True)
 
-# Load geojson file
-country = gpd.read_file(os.path.join(DATA_FOLDER, "svn_border.geojson"))
-# Add 500m buffer to secure sufficient data near border
-country = country.buffer(500)
-
-# Get the country's shape in polygon format
-country_shape = country.geometry.values[0]
-
-# Plot country
-country.plot()
-plt.axis("off")
-
-# Print size
-country_width = country_shape.bounds[2] - country_shape.bounds[0]
-country_height = country_shape.bounds[3] - country_shape.bounds[1]
-print(f"Dimension of the area is {country_width:.0f} x {country_height:.0f} m2")
 #+end_src
-**** identify layers
+
+**** TODO define aoi
 
 #+begin_src python
-&&& gpgk info to list and filter
+  # Load geojson file
+  country = gpd.read_file(os.path.join(DATA_FOLDER, "svn_border.geojson"))
+  # Add 500m buffer to secure sufficient data near border
+  country = country.buffer(500)
+
+  # Get the country's shape in polygon format
+  country_shape = country.geometry.values[0]
+
+  # Plot country
+  country.plot()
+  plt.axis("off")
+
+  # Print size
+  country_width = country_shape.bounds[2] - country_shape.bounds[0]
+  country_height = country_shape.bounds[3] - country_shape.bounds[1]
+  print(f"Dimension of the area is {country_width:.0f} x {country_height:.0f} m2")
+
 #+end_src
 
-*** eo-learn input task
-**** load layers to patch
+**** TODO identify layers
 
 #+begin_src python
-####Define custom EOTasks
-class SentinelHubValidDataTask(EOTask):
-    """
-    Combine Sen2Cor's classification map with `IS_DATA` to define a `VALID_DATA_SH` mask
-    The SentinelHub's cloud mask is asumed to be found in eopatch.mask['CLM']
-    """
-
-    def __init__(self, output_feature):
-        self.output_feature = output_feature
-
-    def execute(self, eopatch):
-        eopatch[self.output_feature] = eopatch.mask["IS_DATA"].astype(bool) & (~eopatch.mask["CLM"].astype(bool))
-        return eopatch
-
-
-class AddValidCountTask(EOTask):
-    """
-    The task counts number of valid observations in time-series and stores the results in the timeless mask.
-    """
-
-    def __init__(self, count_what, feature_name):
-        self.what = count_what
-        self.name = feature_name
-
-    def execute(self, eopatch):
-        eopatch[FeatureType.MASK_TIMELESS, self.name] = np.count_nonzero(eopatch.mask[self.what], axis=0)
-        return eopatch
-
-#### Define the workflow tasks
-# BAND DATA
-# Add a request for S2 bands.
-# Here we also do a simple filter of cloudy scenes (on tile level).
-# The s2cloudless masks and probabilities are requested via additional data.
-band_names = ["B02", "B03", "B04", "B08", "B11", "B12"]
-add_data = SentinelHubInputTask(
-    bands_feature=(FeatureType.DATA, "BANDS"),
-    bands=band_names,
-    resolution=10,
-    maxcc=0.8,
-    time_difference=datetime.timedelta(minutes=120),
-    data_collection=DataCollection.SENTINEL2_L1C,
-    additional_data=[(FeatureType.MASK, "dataMask", "IS_DATA"), (FeatureType.MASK, "CLM"), (FeatureType.DATA, "CLP")],
-    max_threads=5,
-)
-
-
-# CALCULATING NEW FEATURES
-# NDVI: (B08 - B04)/(B08 + B04)
-# NDWI: (B03 - B08)/(B03 + B08)
-# NDBI: (B11 - B08)/(B11 + B08)
-ndvi = NormalizedDifferenceIndexTask(
-    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDVI"), [band_names.index("B08"), band_names.index("B04")]
-)
-ndwi = NormalizedDifferenceIndexTask(
-    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDWI"), [band_names.index("B03"), band_names.index("B08")]
-)
-ndbi = NormalizedDifferenceIndexTask(
-    (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDBI"), [band_names.index("B11"), band_names.index("B08")]
-)
-
-
-# VALIDITY MASK
-# Validate pixels using SentinelHub's cloud detection mask and region of acquisition
-add_sh_validmask = SentinelHubValidDataTask((FeatureType.MASK, "IS_VALID"))
-
-# COUNTING VALID PIXELS
-# Count the number of valid observations per pixel using valid data mask
-add_valid_count = AddValidCountTask("IS_VALID", "VALID_COUNT")
-
-# SAVING TO OUTPUT (if needed)
-save = SaveTask(EOPATCH_FOLDER, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)+begin_src python
+  &&& need on disk to build
 #+end_src
 
-**** define timestamps
+*** TODO eo-learn input task
+**** TODO load layers to patch
 
 #+begin_src python
-  &&& ensure timestamps from gpgk metadata are transferred
+  ####Define custom EOTasks
+  class SentinelHubValidDataTask(EOTask):
+      """
+      Combine Sen2Cor's classification map with `IS_DATA` to define a `VALID_DATA_SH` mask
+      The SentinelHub's cloud mask is asumed to be found in eopatch.mask['CLM']
+      """
+
+      def __init__(self, output_feature):
+          self.output_feature = output_feature
+
+      def execute(self, eopatch):
+          eopatch[self.output_feature] = eopatch.mask["IS_DATA"].astype(bool) & (~eopatch.mask["CLM"].astype(bool))
+          return eopatch
+
+
+  class AddValidCountTask(EOTask):
+      """
+      The task counts number of valid observations in time-series and stores the results in the timeless mask.
+      """
+
+      def __init__(self, count_what, feature_name):
+          self.what = count_what
+          self.name = feature_name
+
+      def execute(self, eopatch):
+          eopatch[FeatureType.MASK_TIMELESS, self.name] = np.count_nonzero(eopatch.mask[self.what], axis=0)
+          return eopatch
+
+  #### Define the workflow tasks
+  # BAND DATA
+  # Add a request for S2 bands.
+  # Here we also do a simple filter of cloudy scenes (on tile level).
+  # The s2cloudless masks and probabilities are requested via additional data.
+  band_names = ["B02", "B03", "B04", "B08", "B11", "B12"]
+  add_data = SentinelHubInputTask(
+      bands_feature=(FeatureType.DATA, "BANDS"),
+      bands=band_names,
+      resolution=10,
+      maxcc=0.8,
+      time_difference=datetime.timedelta(minutes=120),
+      data_collection=DataCollection.SENTINEL2_L1C,
+      additional_data=[(FeatureType.MASK, "dataMask", "IS_DATA"), (FeatureType.MASK, "CLM"), (FeatureType.DATA, "CLP")],
+      max_threads=5,
+  )
+
+
+  # CALCULATING NEW FEATURES
+  # NDVI: (B08 - B04)/(B08 + B04)
+  # NDWI: (B03 - B08)/(B03 + B08)
+  # NDBI: (B11 - B08)/(B11 + B08)
+
+  ndvi = NormalizedDifferenceIndexTask(
+      (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDVI"), [band_names.index("B08"), band_names.index("B04")]
+  )
+  ndwi = NormalizedDifferenceIndexTask(
+      (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDWI"), [band_names.index("B03"), band_names.index("B08")]
+  )
+  ndbi = NormalizedDifferenceIndexTask(
+      (FeatureType.DATA, "BANDS"), (FeatureType.DATA, "NDBI"), [band_names.index("B11"), band_names.index("B08")]
+  )
+
+  # VALIDITY MASK
+  # Validate pixels using SentinelHub's cloud detection mask and region of acquisition
+  add_sh_validmask = SentinelHubValidDataTask((FeatureType.MASK, "IS_VALID"))
+
+  # COUNTING VALID PIXELS
+  # Count the number of valid observations per pixel using valid data mask
+  add_valid_count = AddValidCountTask("IS_VALID", "VALID_COUNT")
+
+  # SAVING TO OUTPUT (if needed)
+  save = SaveTask(EOPATCH_FOLDER, overwrite_permission=OverwritePermission.OVERWRITE_FEATURES)+begin_src python
 #+end_src
 
-*** parse segment gpkg
-**** create reference map task
+**** TODO define timestamps
 
-the segment gpgk file contains polygons and their corresponding labels
+&&& time stamp in filestring can be transferred to metadata if necessary with -om flag
+#+begin_src python
+  # car init raster
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG output.gpkg first_raster.tif -nln raster-1
+
+  # mapcar cadr append raster
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg second_raster.tif -nln raster-2
+  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg third_raster.tif -nln raster-3
+#+end_src
+
+*** TODO parse package_<>
+**** TODO create reference map task
+
+the segment dir contains polygons and their corresponding labels
 
 Ensure compatibility with eolearn LULC rasterization
 eg gpgk for 10 segments
@@ -200,7 +199,7 @@ land cover enum definition
   class LULC(MultiValueEnum):
     """Enum class containing basic LULC types"""
 
-    # &&& create text block programatically from gpgk parser
+    # &&& create text block programatically from parser
     NO_DATA = "No Data", 0, "#ffffff"
     CULTIVATED_LAND = "Cultivated Land", 1, "#ffff00"
     FOREST = "Forest", 2, "#054907"
@@ -222,15 +221,15 @@ land cover enum definition
         return self.values[2]
 
 
-# Reference colormap things
+# Reference colormap
 lulc_cmap = ListedColormap([x.color for x in LULC], name="lulc_cmap")
 lulc_norm = BoundaryNorm([x - 0.5 for x in range(len(LULC) + 1)], lulc_cmap.N)
 #+end_src
 
-**** convert vector segments to raster
+**** TODO convert vector segments to raster
 
 #+begin_src python
-  land_use_ref_path = os.path.join(DATA_FOLDER, "land_use_10class_reference_slovenia_partial.gpkg")
+  land_use_ref_path = os.path.join(DATA_FOLDER, "land_use_10class_partial.gpkg")
   vector_feature = FeatureType.VECTOR_TIMELESS, "LULC_REFERENCE"
 
   vector_import_task = VectorImportTask(vector_feature, land_use_ref_path)
@@ -244,7 +243,7 @@ lulc_norm = BoundaryNorm([x - 0.5 for x in range(len(LULC) + 1)], lulc_cmap.N)
   )
 #+end_src
 
-**** run workflow
+**** TODO run data io workflow
 
 #+begin_src python
   # Define the workflow
@@ -281,7 +280,7 @@ if failed_ids:
     )
 #+end_src
 
-*** verify loaded dataset
+*** TODO verify loaded dataset
 
 #+begin_src python
       # check data structure
@@ -423,7 +422,7 @@ cb.ax.tick_params(labelsize=20)
 plt.show()
 #+end_src
 
-** data clean
+** TODO data clean
 *** filtering
 
 #+begin_src python
@@ -522,7 +521,7 @@ plt.show()
       )
 #+end_src
 
-** construct and train model
+** TODO construct and train model
 *** train test split
 
 #+begin_src python
@@ -585,29 +584,30 @@ features_train.shape
 #+begin_src python
 #+end_src
 
-* Frameworks
-** eo learn
+* Resources
+** Frameworks
+*** eo learn
 
 - https://eo-learn.readthedocs.io/en/latest/
 - https://github.com/sentinel-hub/eo-learn
 - https://github.com/sentinel-hub/eo-learn-examples/tree/main
 - https://github.com/sentinel-hub/eo-learn/tree/master/examples
 
-** tsai
+*** tsai
 
 - https://timeseriesai.github.io/tsai/
 - https://github.com/timeseriesAI/tsai
 
-** fastai
+*** fastai
 
 - https://docs.fast.ai/
 - https://github.com/fastai/fastai
 
-** sklearn
+*** sklearn
 
 - https://scikit-learn.org/stable/
 
-** pytorch
+*** pytorch
 
 - https://pytorch.org/
 - https://github.com/pytorch/pytorch
@@ -618,8 +618,7 @@ features_train.shape
   - https://www.learnpytorch.io/00_pytorch_fundamentals/
   - https://github.com/mrdbourke/pytorch-deep-learning/
 
-* Resources
-
+** links
 comprehensive VAE with tensorboard
 https://hunterheidenreich.com/posts/modern-variational-autoencoder-in-pytorch/
 
@@ -639,23 +638,6 @@ https://github.com/RobRomijnders/AE_ts
 https://github.com/RobRomijnders/ts_clust/tree/master/ts_clust
 
 * Removed
-** Architecture
-*** B-VAE
-
-- Theory https://lilianweng.github.io/posts/2018-08-12-vae/
-- Disentangelment experiments https://wandb.ai/arpastrana/beta_vae/reports/Disentangling-Variational-Autoencoders--VmlldzozNDQ3MDk
-- 2 stage training for disentanglement https://arxiv.org/abs/2209.14783
-- Implemented with solver https://github.com/AxelNathanson/pytorch-Variational-Autoencoder
-- Sne vae clustering https://github.com/jgraving/selfsne
-- Vae from scratch https://m.youtube.com/watch?v=VELQT1-hILo
-
-*** byT5
-
-- Architecture video https://m.youtube.com/watch?v=bCz4OMemCcA
-- [ACTOR transformer vae](https://github.com/Mathux/ACTOR)
-- hackable Gpt trainer https://github.com/karpathy/nanoGPT
-- Train/finetune gpt1 https://github.com/akshat0123/GPT-1
-
 ** Data loader
 
 - overview
@@ -726,6 +708,23 @@ target:
   (predictions-member. result)
 
 Finally to text document such that pytorch data loader is satisfied
+
+** Architecture
+*** B-VAE
+
+- Theory https://lilianweng.github.io/posts/2018-08-12-vae/
+- Disentangelment experiments https://wandb.ai/arpastrana/beta_vae/reports/Disentangling-Variational-Autoencoders--VmlldzozNDQ3MDk
+- 2 stage training for disentanglement https://arxiv.org/abs/2209.14783
+- Implemented with solver https://github.com/AxelNathanson/pytorch-Variational-Autoencoder
+- Sne vae clustering https://github.com/jgraving/selfsne
+- Vae from scratch https://m.youtube.com/watch?v=VELQT1-hILo
+
+*** byT5
+
+- Architecture video https://m.youtube.com/watch?v=bCz4OMemCcA
+- [ACTOR transformer vae](https://github.com/Mathux/ACTOR)
+- hackable Gpt trainer https://github.com/karpathy/nanoGPT
+- Train/finetune gpt1 https://github.com/akshat0123/GPT-1
 
 ** Data Aggregator
 sql queries over gpkg
@@ -900,6 +899,8 @@ https://gdal.org/en/stable/programs/ogr2ogr.html
   ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg second_raster.tif -nln raster-2
   ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg third_raster.tif -nln raster-3
 #+end_src
+
+
 #+begin_src lisp
   #layernames in a gpkg
   ogrinfo ~/qgis/AOI-buffered.gpkg
