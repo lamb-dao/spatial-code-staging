@@ -1719,9 +1719,107 @@ Traversing Latent Dimensions
 ** links
 comprehensive VAE with tensorboard
 https://hunterheidenreich.com/posts/modern-variational-autoencoder-in-pytorch/
+
 implement then sample/visualize a t model
 https://towardsdatascience.com/a-complete-guide-to-write-your-own-transformers-29e23f371ddd
+
 implemented collection of vae in pytorch
 https://github.com/AntixK/PyTorch-VAE
+
 concepts from autoencoder to BVAE
 https://lilianweng.github.io/posts/2018-08-12-vae/
+
+n dim serial
+https://github.com/jonzia/Recurrent_Autoencoder
+
+https://github.com/RobRomijnders/AE_ts
+https://github.com/RobRomijnders/ts_clust/tree/master/ts_clust
+
+** removed
+*** Architecture
+**** B-VAE
+
+- Theory https://lilianweng.github.io/posts/2018-08-12-vae/
+- Disentangelment experiments https://wandb.ai/arpastrana/beta_vae/reports/Disentangling-Variational-Autoencoders--VmlldzozNDQ3MDk
+- 2 stage training for disentanglement https://arxiv.org/abs/2209.14783
+- Implemented with solver https://github.com/AxelNathanson/pytorch-Variational-Autoencoder
+- Sne vae clustering https://github.com/jgraving/selfsne
+- Vae from scratch https://m.youtube.com/watch?v=VELQT1-hILo
+
+**** byT5
+
+- Architecture video https://m.youtube.com/watch?v=bCz4OMemCcA
+- [ACTOR transformer vae](https://github.com/Mathux/ACTOR)
+- hackable Gpt trainer https://github.com/karpathy/nanoGPT
+- Train/finetune gpt1 https://github.com/akshat0123/GPT-1
+
+*** Data loader
+
+- overview
+  - include dates in lispy text based ip:op string, minimal character inclusion
+    eg (ip (date (red (gaussian stack)) (green (gaussian stack)) (blue (gaussian stack) )) op ((dia) (weight) (resistance) (normed-weight)))
+- byT5 data prep
+  - T5 architecture with B-VAE inserted
+    - T5 trainer scripts and utilities
+
+- Write dataloader
+	- Tools
+    - ruricolist/random-sample
+    - mito to SQlite
+    - py4cl cmd
+    - lparallel
+    - mgl dataloader
+    - memoization (modify to add to mito)
+	- less likely Tools
+		- Dask
+		- Geopandas
+		- Daskgeopandas
+		- xarray
+
+	- Input file structure
+    - control dir
+      - AOI extent
+      - Train test extent
+      - validation extent
+      - Id num masks
+      - replicate table
+    - maps dir
+      - EOLearn structure
+      - Maps by sample date
+    - predictions dir
+      - Id key info
+
+	- Out
+		- Combined data vector normed
+		- A observations
+		- B prompt
+		- C loss target
+	- Targets
+		- Clever meerkat, data panels
+
+Prediction Target
+	Swapable output training target, from field data, keyed to id num
+	Validation automation
+		Replicates and folds
+		Map -> arc -> autoencoder -> prediction vs ground truth
+
+- plist data interchange format
+
+data collection
+  ((data-seq . (<>))(predictions . (<>)))
+    (data-seq . ((data-pt . (<>))...(data-pt . (<>))))
+      (data-pt . ((loc . (<>))(blue . (<>))(green . (<>))(red . (<>))(nir . (<>))(ir . (<>))(ndri . (<>))(ndvi . (<>))))
+        (loc . ((x . <LAT>)(y . <LON>)(t . <YYYY-MM-DD>)))
+        (blue . ((3mm . <VAL>)(1cm . <VAL>)(5cm . <VAL>)(50cm . <VAL>)))
+    (predictions . ((height-cm . <VAL>)...(dia-mm . <VAL>)))
+
+prompt:
+  ((data-seq . (<SPAN-CORRUPTED-SEQ>))(task . <PREDICTIONS-MEMBER>)
+    span corrupt with <!>
+  seq to seq pretraining
+  seq to value prediction
+
+target:
+  (predictions-member. result)
+
+Finally to text document such that pytorch data loader is satisfied
