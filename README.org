@@ -1,3 +1,62 @@
+* Setup
+** import
+** path and file selection
+** global variables
+** input validation
+* AOI
+** define
+** grid
+* Load eopatch
+** load rasters
+** load timestamps etc
+** load reference polygons
+*** bind identities gpkg and observations csv
+*** import vectors
+*** rasterize observations
+** visualize layers
+*** object contents
+*** rgb per time
+*** reference map
+*** rasterized observations
+* Prepare eopatch
+** concatenate
+** erosion
+** sampling
+* Create training data
+** extract eopatch
+** reshape data
+*** split patches into train test for GBM
+*** shape for GBM
+from t,w,h,f to n, m
+where n is pixels and m is features x timesteps
+*** split samples into train test for TST &&&
+*** shape for TST
+from t,w,h,f to s,&&&
+* GBM experiments
+** Train
+** validate
+*** F1 table
+*** confusion matrices
+*** class balance
+*** ROC and AUC
+*** Feature importance
+** predict
+** quantify
+*** visualize predicted trait
+*** visualize trait diff
+*** quantify agreement
+* TST experiments
+** Train
+*** unsupervised training
+*** transfer learning
+** validate
+** predict
+** quantify
+* Model comparison
+
+
+
+
 * eolearn calling tsai runtime
 ** TODO data load
 *** TODO eo-learn input task
@@ -80,14 +139,6 @@
 **** TODO define timestamps
 
 &&& time stamp in filestring can be transferred to metadata if necessary with -om flag
-#+begin_src python
-  # car init raster
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG output.gpkg first_raster.tif -nln raster-1
-
-  # mapcar cadr append raster
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg second_raster.tif -nln raster-2
-  ogr2ogr -om RASTER_DATE=YYYY-MM-DD -of GPKG -update output.gpkg third_raster.tif -nln raster-3
-#+end_src
 
 *** TODO parse package_<>
 **** TODO create reference map task
